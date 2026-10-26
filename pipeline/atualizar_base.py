@@ -36,11 +36,15 @@ from pathlib import Path
 RAIZ = Path(__file__).resolve().parent.parent
 UA = 'fiscaliza-petrolina/1.0 (+https://github.com/aquinogr/fiscaliza-petrolina)'
 
+# Fonte oficial primeiro; quando o portal da Receita está fora do ar ou mudou de endereço, usa o espelho
+# público da Casa dos Dados, que mantém os mesmos arquivos, mês a mês.
 RECEITA_BASES = [
     'https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/',
+    'https://dados-abertos-rf-cnpj.casadosdados.com.br/arquivos/',
     'https://dadosabertos.rfb.gov.br/CNPJ/dados_abertos_cnpj/',
 ]
 CNEFE_RAIZ = 'https://ftp.ibge.gov.br/Cadastro_Nacional_de_Enderecos_para_Fins_Estatisticos/Censo_Demografico_2022/'
+CNEFE_PADRAO = CNEFE_RAIZ + 'Arquivos_CNEFE/CSV/Municipio/{uf_cod}_{uf}/{ibge}_{municipio}.zip'
 
 # Layout do arquivo Estabelecimentos (sem cabeçalho, separador ";")
 E_BASICO, E_ORDEM, E_DV, E_FANTASIA, E_SITUACAO, E_INICIO, E_CNAE, E_CNAE_SEC = 0, 1, 2, 4, 5, 10, 11, 12
@@ -67,14 +71,14 @@ class _Links(HTMLParser):
                     self.hrefs.append(v)
 
 
-def http_get(url: str, tentativas: int = 4) -> bytes:
+def http_get(url: str, tentativas: int = 3, timeout: int = 40) -> bytes:
     for i in range(tentativas):
         try:
             req = urllib.request.Request(url, headers={'User-Agent': UA})
-            with urllib.request.urlopen(req, timeout=120) as r:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
                 return r.read()
         except Exception as e:  # noqa: BLE001
-            if i == tentativas - 1:
+            if i == tentativas - 1 or '404' in str(e):
                 raise
             log(f'  falhou ({e}); nova tentativa em {5 * (i + 1)}s')
             time.sleep(5 * (i + 1))
@@ -158,13 +162,14 @@ def receita_mes(mes: str | None) -> tuple[str, str]:
     erros = []
     for base in RECEITA_BASES:
         try:
-            meses = sorted({h.strip('/') for h in listar(base) if re.fullmatch(r'\d{4}-\d{2}/?', h.strip('./'))})
+            meses = sorted({h.strip('./') for h in listar(base) if re.fullmatch(r'\d{4}-\d{2}(-\d{2})?/?', h.strip('./'))})
             if not meses:
                 raise RuntimeError('nenhuma pasta AAAA-MM encontrada')
-            escolhido = mes if mes else meses[-1]
-            if escolhido not in meses:
-                raise RuntimeError(f'mês {escolhido} não publicado (disponíveis até {meses[-1]})')
-            return base, escolhido
+            candidatos = [m for m in meses if m.startswith(mes)] if mes else meses
+            if not candidatos:
+                raise RuntimeError(f'mês {mes} não publicado (disponíveis até {meses[-1]})')
+            log(f'Receita: usando {base}{candidatos[-1]}/')
+            return base, candidatos[-1]
         except Exception as e:  # noqa: BLE001
             erros.append(f'{base}: {e}')
     raise RuntimeError('Receita Federal indisponível. ' + ' | '.join(erros))
@@ -186,10 +191,11 @@ def codigo_municipio_receita(arquivo: Path, nome: str) -> str:
     raise RuntimeError(f'Município {nome} não encontrado na tabela da Receita.')
 
 
-def filtrar_estabelecimentos(arquivos: list[Path], uf: str, cod_mun: str, cnaes: dict) -> list[dict]:
+def filtrar_estabelecimentos(arquivos, uf: str, cod_mun: str, cnaes: dict) -> list[dict]:
     saida = []
     lidas = 0
     for arq in arquivos:
+        arq = arq() if callable(arq) else arq
         log(f'lendo {arq.name}')
         for row in ler_csv_zip(arq):
             lidas += 1
@@ -208,17 +214,31 @@ def filtrar_estabelecimentos(arquivos: list[Path], uf: str, cod_mun: str, cnaes:
                 'complemento': row[E_COMPL].strip(), 'bairro': row[E_BAIRRO].strip(), 'cep': norm_cep(row[E_CEP]),
                 'abertura': f'{ini[:4]}-{ini[4:6]}-{ini[6:8]}' if re.fullmatch(r'\d{8}', ini) else None,
             })
+        apagar_se_baixado(arq)
     log(f'{lidas:,} linhas lidas; {len(saida):,} estabelecimentos de interesse'.replace(',', '.'))
     return saida
 
 
-def nomes_empresas(arquivos: list[Path], basicos: set[str]) -> dict[str, tuple[str, str]]:
+_BAIXADOS: set = set()
+
+
+def apagar_se_baixado(arq: Path) -> None:
+    if arq in _BAIXADOS:
+        try:
+            arq.unlink()
+        except OSError:
+            pass
+
+
+def nomes_empresas(arquivos, basicos: set[str]) -> dict[str, tuple[str, str]]:
     out = {}
     for arq in arquivos:
+        arq = arq() if callable(arq) else arq
         log(f'lendo {arq.name}')
         for row in ler_csv_zip(arq):
             if len(row) > 2 and row[EMP_BASICO] in basicos:
                 out[row[EMP_BASICO]] = (row[EMP_RAZAO].strip(), row[EMP_NATUREZA].strip())
+        apagar_se_baixado(arq)
     return out
 
 
@@ -365,12 +385,20 @@ def main() -> int:
         base, mes = receita_mes(a.mes)
         resumo['mes_receita'] = mes
         log(f'Receita: {base}{mes}/')
-        arquivos = [h for h in listar(f'{base}{mes}/') if h.lower().endswith('.zip')]
+        arquivos = sorted({h.split('/')[-1] for h in listar(f'{base}{mes}/') if h.lower().endswith('.zip')})
+        def adiado(nome):
+            # baixa só na hora de ler e apaga depois, para caber no disco do GitHub Actions
+            def f():
+                caminho = baixar(f'{base}{mes}/{nome}', pasta / nome)
+                _BAIXADOS.add(caminho)
+                return caminho
+            return f
         def pegar(prefixo):
-            return [baixar(f'{base}{mes}/{h}', pasta / h) for h in sorted(set(arquivos)) if h.lower().startswith(prefixo.lower())]
-        mun_zip = pegar('Municipios')[0]
+            return [adiado(h) for h in arquivos if h.lower().startswith(prefixo.lower())]
+        mun_zip = pegar('Municipios')[0]()
         estab_zips = pegar('Estabelecimentos')
         emp_zips = [] if a.pular_empresas else pegar('Empresas')
+        log(f'{len(estab_zips)} arquivos de estabelecimentos, {len(emp_zips)} de empresas')
 
     cod_mun = codigo_municipio_receita(mun_zip, a.municipio)
     log(f'código da Receita para {a.municipio}: {cod_mun}')
@@ -381,9 +409,14 @@ def main() -> int:
     if a.local:
         cnefe_zip = next(pasta.glob('*[Cc][Nn][Ee][Ff][Ee]*.zip'), None) or next(p for p in pasta.glob('*.zip') if a.ibge in p.name)
     else:
-        url = a.cnefe_url or achar_cnefe(a.ibge, a.ibge[:2])
+        url = a.cnefe_url or CNEFE_PADRAO.format(uf_cod=a.ibge[:2], uf=a.uf, ibge=a.ibge, municipio=sem_acentos(a.municipio).upper().replace(' ', '_'))
         log(f'CNEFE: {url}')
-        cnefe_zip = baixar(url, pasta / ('cnefe_' + url.rsplit('/', 1)[-1]))
+        try:
+            cnefe_zip = baixar(url, pasta / ('cnefe_' + url.rsplit('/', 1)[-1]))
+        except Exception as e:  # noqa: BLE001
+            log(f'CNEFE no endereço padrão falhou ({e}); procurando no FTP do IBGE')
+            url = achar_cnefe(a.ibge, a.ibge[:2])
+            cnefe_zip = baixar(url, pasta / ('cnefe_' + url.rsplit('/', 1)[-1]))
     idx = indexar_cnefe(ler_cnefe(cnefe_zip, a.ibge))
 
     # ---- montagem

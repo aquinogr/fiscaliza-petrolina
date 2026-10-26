@@ -1,7 +1,7 @@
 // App do vistoriador (celular): roteiro do dia, navegação, check-in por geolocalização, resultado e encaixes.
 /* global L */
 import * as st from './store.js';
-import { h, mount, clear, sheet, toast, field, select, today, fmtDate, fmtTime, fmtDist, relDays, diffDays, confirmar } from './ui.js';
+import { h, mount, clear, sheet, toast, field, select, today, fmtDate, fmtTime, fmtDist, relDays, diffDays, confirmar, copyText } from './ui.js';
 import { TIPOS, STATUS, RESULTADOS, RESULTADO_NOME, SITUACAO_DOC, SITUACAO_NOME, formatarCNPJ } from './dominio.js';
 import { gerarSugestoes, cnaeInfo } from './score.js';
 import { criarMapa, iconeMissao, iconeBase, iconeEu } from './map.js';
@@ -9,6 +9,7 @@ import { dist, linkMaps, linkWaze, extensaoRota } from './geo.js';
 import { salvarFoto, fotoURL } from './fotos.js';
 import { marca } from './marca.js';
 import { linhasMoci } from './moci.js';
+import { linkPara, whatsapp } from './link.js';
 
 const MOTIVOS_NAO_REALIZADA = ['Sem tempo hoje', 'Viatura indisponível', 'Endereço inacessível', 'Remanejado pelo oficial', 'Outro'];
 const RAIO_PERTO = 700;
@@ -19,18 +20,19 @@ export function iniciarCampo(root, { vid, sair }) {
   const ui = { aba: 'roteiro', pos: null, simular: false, posSim: null, watch: null, erroGps: null, sheetAberta: null };
   const ouvintesPos = new Set();
   const S = () => st.S();
-  const demo = S().modo === 'demo';
+  const simularOn = new URLSearchParams(location.search).has('simular') || sessionStorage.getItem('fp:simular') === '1';
+  if (simularOn) sessionStorage.setItem('fp:simular', '1');
   const hoje = () => today();
   const raio = () => S().config.raio_checkin || 150;
 
   // ---------- estrutura ----------
-  const conn = h('button', { class: 'conn', type: 'button', onclick: () => { const n = st.sincronizar(); toast(n ? `${n} registro(s) enviados.` : navigator.onLine ? 'Tudo enviado.' : 'Sem sinal. Os registros ficam guardados e são enviados quando a conexão voltar.'); atualizarConn(); } });
+  const conn = h('button', { class: 'conn', type: 'button', onclick: () => toast(navigator.onLine ? 'Tudo fica guardado neste celular. Para o oficial receber, use "Enviar resultados ao oficial" no Roteiro.' : 'Sem sinal. Pode continuar: tudo fica guardado no celular. Envie os resultados quando a conexão voltar.') });
   const main = h('main', { class: 'campo-main' });
   const nav = h('nav', { class: 'campo-nav' }, [['roteiro', 'Roteiro', 'M4 6h16M4 12h16M4 18h10'], ['mapa', 'Mapa', 'M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2zm0 0v14m6-12v14'], ['perto', 'Perto de mim', 'M12 21s7-6.2 7-11.5A7 7 0 0 0 5 9.5C5 14.8 12 21 12 21zm0-9a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z']].map(([k, l, d]) => h('button', {
     type: 'button', class: 'nav-btn', dataset: { aba: k }, onclick: () => { ui.aba = k; render(); },
   }, icone(d), h('span', {}, l))));
   const chkSim = h('input', { type: 'checkbox', onchange: (e) => { ui.simular = e.target.checked; if (ui.simular) { toast('Simulação ligada: toque no mapa (aba Mapa) para definir sua posição.'); ui.aba = 'mapa'; render(); } else { ui.posSim = null; emitirPos(); } } });
-  const demoBar = demo ? h('div', { class: 'demo-bar' }, h('span', {}, 'Demonstração: os dados ficam só neste aparelho.'), h('label', { class: 'check' }, chkSim, 'Simular GPS')) : null;
+  const demoBar = simularOn ? h('div', { class: 'demo-bar' }, h('span', {}, 'Modo de teste do GPS.'), h('label', { class: 'check' }, chkSim, 'Simular GPS')) : null;
 
   mount(root, h('div', { class: 'campo', style: { '--c': v.cor } },
     h('header', { class: 'campo-top' },
@@ -49,14 +51,13 @@ export function iniciarCampo(root, { vid, sair }) {
 
   // ---------- conexão e envio ----------
   function atualizarConn() {
-    const n = st.pendentesEnvio(vid);
     const on = navigator.onLine;
-    conn.className = `conn ${on ? (n ? 'conn-sync' : 'conn-ok') : 'conn-off'}`;
-    conn.textContent = on ? (n ? `Enviando ${n}` : 'Online') : (n ? `Sem sinal: ${n} aguardando` : 'Sem sinal');
+    conn.className = `conn ${on ? 'conn-ok' : 'conn-off'}`;
+    conn.textContent = on ? 'Online' : 'Sem sinal';
   }
-  window.addEventListener('online', () => { setTimeout(() => { const n = st.sincronizar(); if (n) toast(`Conexão de volta: ${n} registro(s) enviados.`, 'ok'); atualizarConn(); }, 800); });
+  window.addEventListener('online', () => { atualizarConn(); toast('Conexão de volta.', 'ok'); });
   window.addEventListener('offline', () => { atualizarConn(); toast('Sem sinal. Pode continuar: tudo fica guardado no aparelho.'); });
-  setInterval(() => { if (navigator.onLine && st.pendentesEnvio(vid)) { st.sincronizar(); } atualizarConn(); }, 8000);
+
 
   // ---------- geolocalização ----------
   function emitirPos() { ouvintesPos.forEach((f) => { try { f(posAtual()); } catch (e) { console.error(e); } }); }
@@ -108,9 +109,13 @@ export function iniciarCampo(root, { vid, sair }) {
         h('div', { class: 'resumo-n' }, h('strong', {}, `${feitas}`), h('span', {}, ` de ${lista.length}`)),
         h('div', { class: 'grow' },
           h('div', {}, lista.length ? (feitas === lista.length ? 'Roteiro concluído.' : `Próxima: ${st.estab(proxima?.estab_id)?.nome || ''}`) : 'Nenhuma missão para hoje.'),
-          lista.length ? h('div', { class: 'muted small' }, `Rota estimada de ${km.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} km saindo da base`) : h('div', { class: 'muted small' }, 'Fale com o oficial de serviço se isso não estiver certo.')),
+          lista.length ? h('div', { class: 'muted small' }, `Rota estimada de ${km.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} km saindo da base`) : h('div', { class: 'muted small' }, 'Quando o oficial enviar o roteiro pelo WhatsApp, abra o link aqui no celular.')),
         lista.length ? h('div', { class: 'progress' }, h('span', { style: { width: `${(feitas / lista.length) * 100}%` } })) : null),
       h('ol', { class: 'roteiro' }, lista.map((m) => cartao(m))),
+      lista.length ? h('section', { class: 'block' },
+        h('h3', {}, 'Devolver ao oficial'),
+        h('p', { class: 'hint' }, feitas ? `${feitas} de ${lista.length} missão(ões) com resultado. Envie quando terminar o dia (ou antes, se o oficial pedir). Pode enviar mais de uma vez.` : 'Depois das vistorias, envie os resultados por aqui.'),
+        h('button', { class: `btn ${feitas ? 'btn-primary' : ''}`, type: 'button', onclick: () => enviarResultados() }, 'Enviar resultados ao oficial')) : null,
       meusPedidos.length ? h('section', { class: 'block' }, h('h3', {}, 'Encaixes pedidos hoje'),
         meusPedidos.map((q) => h('div', { class: 'row between' }, h('span', {}, st.estab(q.estab_id)?.nome || ''), h('span', { class: `tag ${q.status === 'aprovado' ? 'tag-ok' : q.status === 'recusado' ? 'tag-alta' : 'tag-warn'}` }, q.status === 'pendente' ? 'Aguardando oficial' : q.status === 'aprovado' ? 'Aprovado' : 'Recusado')))) : null);
   }
@@ -125,6 +130,32 @@ export function iniciarCampo(root, { vid, sair }) {
           h('span', { class: 'rname' }, e?.nome || ''),
           h('span', { class: 'raddr' }, e?.endereco || ''),
           h('span', { class: 'mmeta' }, TIPOS[m.tipo]?.nome, m.prioridade === 'alta' ? h('span', { class: 'tag tag-alta' }, 'Alta') : null, h('span', { class: `status s-${m.status}` }, stx)))));
+  }
+
+  async function enviarResultados() {
+    const lista = minhas();
+    const pacote = st.montarRetorno(vid, hoje());
+    const link = await linkPara('retorno', pacote);
+    const linhas = lista.map((m) => {
+      const e = st.estab(m.estab_id);
+      const r = m.status === 'concluida' ? (RESULTADO_NOME[m.checkout?.resultado] || 'Concluída') : m.status === 'nao_realizada' ? `Não realizada (${m.checkout?.motivo || ''})` : m.status === 'no_local' ? 'No local' : 'Pendente';
+      return `${m.ordem}. ${e?.nome || ''}: ${r}`;
+    });
+    const fotos = lista.reduce((a, m) => a + (m.checkout?.fotos?.length || 0), 0);
+    const texto = [`*Resultados de ${v.nome}, ${fmtDate(hoje())}*`, ...linhas,
+      pacote.enc.length ? `Pedidos de encaixe: ${pacote.enc.length}` : null,
+      fotos ? `Fotos: ${fotos} (ficaram no celular; mando à parte se precisar)` : null,
+      '', 'Abra o link no painel para importar:', link].filter((x) => x !== null).join('\n');
+    sheet({
+      title: 'Enviar resultados',
+      body: h('div', { class: 'stack' },
+        h('p', {}, 'O link leva os check-ins, os resultados, os pedidos de encaixe e as correções de local. O oficial abre no painel e tudo entra sozinho.'),
+        h('textarea', { class: 'report', rows: Math.min(12, linhas.length + 5), readonly: true }, texto)),
+      actions: [
+        h('button', { class: 'btn', type: 'button', onclick: () => copyText(link).then(() => toast('Link copiado.', 'ok')) }, 'Copiar link'),
+        h('a', { class: 'btn btn-primary', href: whatsapp(texto), target: '_blank', rel: 'noopener' }, 'Enviar pelo WhatsApp'),
+      ],
+    });
   }
 
   // ---------- mapa ----------

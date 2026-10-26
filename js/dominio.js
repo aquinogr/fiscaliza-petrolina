@@ -1,14 +1,16 @@
 // Vocabulário e regras de negócio compartilhadas.
 
+// "v2": tipos da Regularização, desativados até a versão 2.0.
 export const TIPOS = {
-  regularizacao: { nome: 'Regularização', fila: 'solicitada' },
-  evento: { nome: 'Evento temporário', fila: 'solicitada' },
-  retorno: { nome: 'Retorno de notificação', fila: 'urgencia' },
+  fiscalizacao: { nome: 'Fiscalização', fila: 'proativa' },
   avcb_vencido: { nome: 'AVCB vencido', fila: 'urgencia' },
   denuncia: { nome: 'Denúncia', fila: 'urgencia' },
-  fiscalizacao: { nome: 'Fiscalização', fila: 'proativa' },
+  retorno: { nome: 'Retorno de notificação', fila: 'urgencia' },
+  evento: { nome: 'Fiscalização de evento', fila: 'urgencia' },
   encaixe: { nome: 'Encaixe', fila: 'proativa' },
+  regularizacao: { nome: 'Regularização', fila: 'solicitada', v2: true },
 };
+export const TIPOS_CADASTRO = Object.entries(TIPOS).filter(([k, t]) => !t.v2 && k !== 'encaixe');
 
 export const FILAS = {
   solicitada: 'Demanda solicitada',

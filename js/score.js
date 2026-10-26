@@ -77,19 +77,28 @@ export function pontuar(e, ctx) {
   return { score: Math.round((total / max) * 100), partes, tags, info };
 }
 
+// Contagem de vizinhos num raio de 250 m, com grade espacial (rápido mesmo com milhares de pontos).
+let cacheViz = { chave: '', mapa: new Map() };
 export function contextoScore(state) {
-  const base = state.estabelecimentos;
-  const cache = new Map();
-  return {
-    config: state.config,
-    vizinhos: (e) => {
-      if (cache.has(e.id)) return cache.get(e.id);
+  const base = state.estabelecimentos.filter((e) => e.ativo !== false);
+  const chave = `${base.length}:${base[0]?.id}:${base[base.length - 1]?.id}`;
+  if (cacheViz.chave !== chave) {
+    const passo = 0.0025; // ~275 m
+    const grade = new Map();
+    const cel = (lat, lng) => `${Math.floor(lat / passo)}:${Math.floor(lng / passo)}`;
+    for (const e of base) { const k = cel(e.lat, e.lng); if (!grade.has(k)) grade.set(k, []); grade.get(k).push(e); }
+    const mapa = new Map();
+    for (const e of base) {
+      const gi = Math.floor(e.lat / passo), gj = Math.floor(e.lng / passo);
       let n = 0;
-      for (const o of base) if (o.id !== e.id && Math.abs(o.lat - e.lat) < 0.003 && Math.abs(o.lng - e.lng) < 0.003 && dist(o, e) <= 250) n++;
-      cache.set(e.id, n);
-      return n;
-    },
-  };
+      for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
+        for (const o of grade.get(`${gi + a}:${gj + b}`) || []) if (o !== e && dist(o, e) <= 250) n++;
+      }
+      mapa.set(e.id, n);
+    }
+    cacheViz = { chave, mapa };
+  }
+  return { config: state.config, vizinhos: (e) => cacheViz.mapa.get(e.id) || 0 };
 }
 
 // Lista de sugestões para o painel do oficial.

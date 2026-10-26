@@ -1,42 +1,91 @@
 // Estado da aplicação e operações de negócio.
-// Modo demonstração: tudo fica no localStorage deste aparelho.
+// Por enquanto tudo fica no localStorage deste aparelho; o roteiro vai ao celular do vistoriador por link
+// e os resultados voltam pelo mesmo caminho. A base pública (Receita + IBGE) é lida do próprio site a cada abertura
+// e só os estabelecimentos com alguma informação de campo são gravados no aparelho.
 // Quando o Supabase for ligado, o mesmo conjunto de operações passa a enviar a "fila de envio" (outbox) ao servidor.
-import { gerarDemo } from './seed.js';
+import { estadoInicial, VERSAO_ESTADO } from './seed.js';
 import { today, addDays, fmtDate } from './ui.js';
 import { ordenarRota, setorDe, dist } from './geo.js';
 import { aplicarResultado, RESULTADOS_COM_EXIGENCIA } from './dominio.js';
 import { converterPonto, cidadeAceita, nomesParecidos, MOCI_URL_PADRAO } from './moci.js';
 
-const KEY = 'fiscaliza-petrolina:v1';
+const KEY = 'fiscaliza-petrolina:dados';
 let state = null;
+let rev = 0;
+let basePublica = null; // { metadata, features }
 const subs = new Set();
 
 export function carregar() {
   try { state = JSON.parse(localStorage.getItem(KEY)); } catch { state = null; }
-  if (!state || state.versao !== 1) { state = gerarDemo(); gravar(); }
+  if (!state || state.versao !== VERSAO_ESTADO) { state = estadoInicial(); gravar(); }
+  try { localStorage.removeItem('fiscaliza-petrolina:v1'); } catch { /* dados de teste antigos */ }
   return state;
 }
 export const S = () => state;
+export const revisao = () => rev;
 
+function paraGravar() {
+  const ref = new Set();
+  state.missoes.forEach((m) => ref.add(m.estab_id));
+  state.solicitacoes.forEach((q) => ref.add(q.estab_id));
+  state.correcoes.forEach((c) => ref.add(c.estab_id));
+  state.locais.forEach((l) => l.estab_id && ref.add(l.estab_id));
+  Object.keys(state.decisoes).forEach((id) => ref.add(id));
+  const guardar = (e) => e.origem !== 'receita' || ref.has(e.id) || e.moci_id || e.ultima_fiscalizacao || e.notificacoes || e.geo_corrigido || (e.situacao_doc && e.situacao_doc !== 'desconhecida');
+  return JSON.stringify({ ...state, estabelecimentos: state.estabelecimentos.filter(guardar) });
+}
 function gravar() {
-  try { localStorage.setItem(KEY, JSON.stringify(state)); }
+  try { localStorage.setItem(KEY, paraGravar()); }
   catch (e) { console.error('Falha ao gravar', e); }
 }
 export function salvar() { gravar(); emit(); }
 export function on(fn) { subs.add(fn); return () => subs.delete(fn); }
-function emit() { subs.forEach((f) => { try { f(state); } catch (e) { console.error(e); } }); }
+function emit() { rev++; subs.forEach((f) => { try { f(state); } catch (e) { console.error(e); } }); }
 
 // Outra aba do mesmo aparelho alterou os dados (ex.: oficial numa aba, vistoriador na outra)
 window.addEventListener('storage', (e) => {
-  if (e.key === KEY && e.newValue) { try { state = JSON.parse(e.newValue); emit(); } catch { /* ignora */ } }
+  if (e.key === KEY && e.newValue) { try { state = JSON.parse(e.newValue); mesclarBase(); emit(); } catch { /* ignora */ } }
 });
 
-export function resetDemo() { state = gerarDemo(); salvar(); }
-export function exportarJSON() { return JSON.stringify(state, null, 2); }
+export function apagarTudo() { state = estadoInicial(); mesclarBase(); salvar(); }
+export function exportarJSON() { return paraGravar(); }
 export function importarJSON(txt) {
   const js = JSON.parse(txt);
-  if (!js || js.versao !== 1 || !Array.isArray(js.missoes)) throw new Error('Arquivo não reconhecido.');
-  state = js; salvar();
+  if (!js || js.versao !== VERSAO_ESTADO || !Array.isArray(js.missoes)) throw new Error('Arquivo não reconhecido.');
+  state = js; mesclarBase(); salvar();
+}
+
+// ---------- base pública (Receita Federal + IBGE), publicada pela rotina mensal ----------
+export function definirBasePublica(gj) {
+  basePublica = { metadata: gj.metadata || {}, features: Array.isArray(gj.features) ? gj.features : [] };
+  mesclarBase();
+  emit();
+  return basePublica.features.length;
+}
+export function infoBasePublica() { return basePublica ? { total: basePublica.features.length, ...basePublica.metadata } : null; }
+function mesclarBase() {
+  if (!basePublica || !state) return;
+  const porId = new Map(state.estabelecimentos.map((e) => [e.id, e]));
+  const vistos = new Set();
+  for (const f of basePublica.features) {
+    const p = f.properties || {};
+    const [lng, lat] = f.geometry?.coordinates || [];
+    if (!p.cnpj || !isFinite(lat) || !isFinite(lng)) continue;
+    const id = `r${p.cnpj}`;
+    vistos.add(id);
+    const pub = { cnpj: p.cnpj, nome: p.nome, cnae: p.cnae, endereco: p.endereco || '', bairro: p.bairro || '', abertura: p.abertura || null, geo_precisao: p.geo_precisao || null };
+    const e = porId.get(id);
+    if (e) {
+      Object.assign(e, pub);
+      if (!e.geo_corrigido) { e.lat = lat; e.lng = lng; }
+      if (e.inativo_por === 'receita') { e.ativo = true; delete e.inativo_por; }
+    } else {
+      state.estabelecimentos.push({ id, origem: 'receita', ...pub, lat, lng, situacao_doc: 'desconhecida', validade_doc: null, ultima_fiscalizacao: null, notificacoes: 0, ultimo_resultado: null });
+    }
+  }
+  for (const e of state.estabelecimentos) {
+    if (e.origem === 'receita' && !vistos.has(e.id) && e.ativo !== false) { e.ativo = false; e.inativo_por = 'receita'; }
+  }
 }
 
 export const uid = (p) => `${p}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -66,7 +115,13 @@ export function definirSessao(s) {
 }
 
 // ---------- consultas ----------
-export const estab = (id) => state.estabelecimentos.find((e) => e.id === id);
+let idxEstab = null, idxRev = -1, idxLen = -1;
+export function estab(id) {
+  if (!idxEstab || idxRev !== rev || idxLen !== state.estabelecimentos.length) {
+    idxEstab = new Map(state.estabelecimentos.map((e) => [e.id, e])); idxRev = rev; idxLen = state.estabelecimentos.length;
+  }
+  return idxEstab.get(id) || state.estabelecimentos.find((e) => e.id === id);
+}
 export const vist = (id) => state.vistoriadores.find((v) => v.id === id);
 export const setor = (id) => state.setores.find((s) => s.id === id);
 export const missao = (id) => state.missoes.find((m) => m.id === id);
@@ -236,8 +291,14 @@ export function desfazerCheckin(id) {
 }
 export function fazerCheckout(id, saida) {
   const m = missao(id); if (!m) return null;
+  const r = concluirMissao(m, { ts: Date.now(), ...saida });
+  registrar('checkout', id, m.vistoriador_id); salvar();
+  return r;
+}
+function concluirMissao(m, checkout) {
+  const saida = checkout;
   m.status = 'concluida';
-  m.checkout = { ts: Date.now(), ...saida };
+  m.checkout = checkout;
   const e = estab(m.estab_id);
   aplicarResultado(e, m.checkout, m.data || today());
   let retorno = null;
@@ -246,7 +307,6 @@ export function fazerCheckout(id, saida) {
     retorno = { id: uid('m'), estab_id: m.estab_id, tipo: 'retorno', prioridade: 'alta', status: 'pendente', data: null, vistoriador_id: null, ordem: 0, processo: m.processo, prazo, notas: `Retorno automático: ${saida.resultado === 'notificado' ? 'notificação' : 'exigência'} de ${fmtDate(m.data || today())}.`, origem: 'automatico', criado_em: today(), checkin: null, checkout: null };
     state.missoes.push(retorno);
   }
-  registrar('checkout', id, m.vistoriador_id); salvar();
   return { missao: m, retorno };
 }
 export function marcarNaoRealizada(id, motivo) {
@@ -294,19 +354,6 @@ export function salvarVistoriador(v) {
   else Object.assign(vist(v.id), v);
   registrar('vistoriador', v.id); salvar();
   return v;
-}
-export function importarEstabelecimentos(lista) {
-  // lista: [{cnpj, nome, cnae, endereco, bairro, lat, lng, abertura}]
-  let novos = 0, atual = 0;
-  const porCnpj = new Map(state.estabelecimentos.filter((e) => e.cnpj).map((e) => [e.cnpj, e]));
-  for (const x of lista) {
-    if (!x || !isFinite(x.lat) || !isFinite(x.lng)) continue;
-    const ja = x.cnpj && porCnpj.get(x.cnpj);
-    if (ja) { Object.assign(ja, { nome: x.nome || ja.nome, cnae: x.cnae || ja.cnae, endereco: x.endereco || ja.endereco, bairro: x.bairro || ja.bairro, abertura: x.abertura || ja.abertura, ativo: true }); if (!ja.geo_corrigido) { ja.lat = x.lat; ja.lng = x.lng; } atual++; }
-    else { const e = novoEstabelecimento(x); e.origem = 'receita'; e.abertura = x.abertura || null; novos++; }
-  }
-  registrar('importar_base', `${novos}/${atual}`); salvar();
-  return { novos, atual };
 }
 
 // ---------- MOCI ----------
@@ -391,4 +438,164 @@ export function filaDeVencidos({ incluirSemAvcb = false } = {}) {
   }
   if (lista.length) { registrar('fila_vencidos', String(lista.length)); salvar(); }
   return lista.length;
+}
+
+// ---------- equipe do dia ----------
+export function equipeDo(data) {
+  const ativos = state.vistoriadores.filter((v) => v.ativo !== false).map((v) => v.id);
+  const salvo = state.equipe_dia?.[data];
+  return salvo ? salvo.filter((id) => ativos.includes(id)) : ativos;
+}
+export function alternarEquipe(data, vid) {
+  state.equipe_dia = state.equipe_dia || {};
+  const atual = equipeDo(data);
+  state.equipe_dia[data] = atual.includes(vid) ? atual.filter((x) => x !== vid) : [...atual, vid];
+  registrar('equipe_dia', `${data}:${vid}`); salvar();
+}
+
+// ---------- distribuição por proximidade (não precisa de setores) ----------
+// Pega a fila por ordem de prioridade, até encher as vagas da equipe do dia, e divide em grupos geográficos
+// (um por vistoriador) com limite de missões por pessoa. Depois ordena cada roteiro pela menor distância.
+export function distribuirPorProximidade(data) {
+  const cap = state.config.capacidade_dia || 7;
+  const equipe = equipeDo(data).map((vid) => {
+    const atuais = missoesDo(vid, data);
+    const pts = atuais.map(pontoMissao).filter(Boolean);
+    return { vid, vagas: Math.max(0, cap - atuais.length), ancora: pts.length ? { lat: pts.reduce((a, p) => a + p.lat, 0) / pts.length, lng: pts.reduce((a, p) => a + p.lng, 0) / pts.length } : null };
+  }).filter((x) => x.vagas > 0);
+  if (!equipe.length) return 0;
+  const vagas = equipe.reduce((a, x) => a + x.vagas, 0);
+  const cand = ordenarFila(fila()).map((m) => ({ m, p: pontoMissao(m) })).filter((x) => x.p).slice(0, vagas);
+  if (!cand.length) return 0;
+  // centros iniciais: onde a pessoa já tem missões; senão, os pontos mais afastados entre si
+  const centros = [];
+  for (const q of equipe) if (q.ancora) centros.push({ ...q.ancora });
+  while (centros.length < equipe.length) {
+    let melhor = cand[0].p, bd = -1;
+    for (const c of cand) {
+      const d = centros.length ? Math.min(...centros.map((z) => dist(z, c.p))) : dist(state.config.base, c.p);
+      if (d > bd) { bd = d; melhor = c.p; }
+    }
+    centros.push({ ...melhor });
+  }
+  let grupo = new Array(cand.length).fill(0);
+  for (let it = 0; it < 12; it++) {
+    const pares = [];
+    cand.forEach((c, i) => centros.forEach((z, k) => pares.push([dist(z, c.p), i, k])));
+    pares.sort((a, b) => a[0] - b[0]);
+    const usado = new Array(cand.length).fill(false);
+    const cheio = equipe.map(() => 0);
+    const novo = new Array(cand.length).fill(-1);
+    for (const [, i, k] of pares) {
+      if (usado[i] || cheio[k] >= equipe[k].vagas) continue;
+      usado[i] = true; cheio[k]++; novo[i] = k;
+    }
+    const mudou = novo.some((k, i) => k !== grupo[i]);
+    grupo = novo;
+    centros.forEach((z, k) => {
+      const membros = cand.filter((_, i) => grupo[i] === k);
+      if (!membros.length) return;
+      if (equipe[k].ancora) return; // mantém o centro de quem já tem rota
+      z.lat = membros.reduce((a, c) => a + c.p.lat, 0) / membros.length;
+      z.lng = membros.reduce((a, c) => a + c.p.lng, 0) / membros.length;
+    });
+    if (!mudou) break;
+  }
+  let n = 0;
+  cand.forEach((c, i) => {
+    const q = equipe[grupo[i]]; if (!q) return;
+    c.m.vistoriador_id = q.vid; c.m.data = data; c.m.ordem = 999; n++;
+  });
+  registrar('distribuir_proximidade', data); salvar();
+  for (const q of equipe) reordenarRota(q.vid, data);
+  return n;
+}
+
+// ---------- roteiro por link (sem banco de dados) ----------
+const resumoEstab = (e) => e && ({ id: e.id, nome: e.nome, end: e.endereco, b: e.bairro, lat: e.lat, lng: e.lng, cnpj: e.cnpj, cnae: e.cnae, sit: e.situacao_doc, val: e.validade_doc, uf: e.ultima_fiscalizacao, ur: e.ultimo_resultado, moci_id: e.moci_id || null, moci: e.moci || null, origem: e.origem });
+function upsertEstab(r) {
+  if (!r) return null;
+  let e = estab(r.id);
+  const campos = { nome: r.nome, endereco: r.end || '', bairro: r.b || '', lat: r.lat, lng: r.lng, cnpj: r.cnpj || '', cnae: r.cnae || '', situacao_doc: r.sit || 'desconhecida', validade_doc: r.val || null, ultima_fiscalizacao: r.uf || null, ultimo_resultado: r.ur || null, moci_id: r.moci_id || undefined, moci: r.moci || undefined };
+  if (!e) { e = { id: r.id, origem: r.origem || 'manual', notificacoes: 0, abertura: null, ...campos }; state.estabelecimentos.push(e); }
+  else Object.assign(e, Object.fromEntries(Object.entries(campos).filter(([, v]) => v !== undefined)));
+  return e;
+}
+
+export function montarRoteiro(vid, data) {
+  const v = vist(vid);
+  return {
+    t: 'rota', v: 1, d: data, vid, nome: v?.nome, cor: v?.cor, raio: state.config.raio_checkin, base: state.config.base, emitido: Date.now(),
+    ms: missoesDo(vid, data).map((m) => ({ id: m.id, o: m.ordem, t: m.tipo, p: m.prioridade, s: m.status, n: m.notas, pz: m.prazo, pr: m.processo, e: resumoEstab(estab(m.estab_id)) })),
+  };
+}
+
+export function aplicarRoteiro(r) {
+  if (!r || r.t !== 'rota' || !r.vid) throw new Error('Link de roteiro inválido.');
+  let v = vist(r.vid);
+  if (!v) { v = { id: r.vid, nome: r.nome || 'Vistoriador', cor: r.cor || '#2563EB' }; state.vistoriadores.push(v); }
+  else Object.assign(v, { nome: r.nome || v.nome, cor: r.cor || v.cor });
+  if (r.raio) state.config.raio_checkin = r.raio;
+  if (r.base) state.config.base = r.base;
+  const ids = new Set();
+  for (const x of r.ms || []) {
+    const e = upsertEstab(x.e);
+    if (!e) continue;
+    ids.add(x.id);
+    const m = missao(x.id);
+    const dados = { estab_id: e.id, tipo: x.t, prioridade: x.p, notas: x.n || '', prazo: x.pz || null, processo: x.pr || null, ordem: x.o, vistoriador_id: r.vid, data: r.d };
+    if (!m) state.missoes.push({ id: x.id, status: 'pendente', origem: 'roteiro', criado_em: today(), checkin: null, checkout: null, ...dados });
+    else if (m.status === 'pendente') Object.assign(m, dados);
+    else Object.assign(m, { ordem: x.o, notas: x.n || m.notas });
+  }
+  // missões que o oficial tirou do roteiro e ainda não foram feitas
+  state.missoes = state.missoes.filter((m) => !(m.vistoriador_id === r.vid && m.data === r.d && m.status === 'pendente' && !ids.has(m.id)));
+  registrar('receber_roteiro', `${r.vid}:${r.d}`, r.vid); salvar();
+  return { vid: r.vid, data: r.d, total: ids.size };
+}
+
+export function montarRetorno(vid, data) {
+  return {
+    t: 'retorno', v: 1, d: data, vid, emitido: Date.now(),
+    ms: missoesDo(vid, data).filter((m) => m.status !== 'pendente').map((m) => ({
+      id: m.id, s: m.status, ci: m.checkin, co: m.checkout ? { ...m.checkout, fotos: (m.checkout.fotos || []).length } : null, e: resumoEstab(estab(m.estab_id)), t: m.tipo,
+    })),
+    enc: state.solicitacoes.filter((q) => q.vistoriador_id === vid && q.data === data && q.status === 'pendente').map((q) => ({ id: q.id, ts: q.ts, obs: q.obs, e: resumoEstab(estab(q.estab_id)) })),
+    cor: state.correcoes.filter((c) => c.vistoriador_id === vid && c.status === 'pendente').map((c) => ({ id: c.id, missao_id: c.missao_id, lat: c.lat, lng: c.lng, ts: c.ts, e: resumoEstab(estab(c.estab_id)) })),
+  };
+}
+
+export function aplicarRetorno(r) {
+  if (!r || r.t !== 'retorno' || !r.vid) throw new Error('Link de resultados inválido.');
+  const out = { concluidas: 0, nao_realizadas: 0, no_local: 0, encaixes: 0, correcoes: 0, ja_importadas: 0, retornos: 0 };
+  for (const x of r.ms || []) {
+    let m = missao(x.id);
+    if (!m) {
+      const e = upsertEstab(x.e); if (!e) continue;
+      m = { id: x.id, estab_id: e.id, tipo: x.t || 'fiscalizacao', prioridade: 'media', status: 'pendente', data: r.d, vistoriador_id: r.vid, ordem: 99, origem: 'retorno', criado_em: r.d, checkin: null, checkout: null };
+      state.missoes.push(m);
+    }
+    if (m.status === 'concluida' || m.status === 'nao_realizada') { out.ja_importadas++; continue; }
+    m.checkin = x.ci || m.checkin;
+    if (x.s === 'concluida' && x.co) {
+      const { retorno } = concluirMissao(m, { ...x.co, fotos: [], fotos_no_celular: x.co.fotos || 0 });
+      out.concluidas++; if (retorno) out.retornos++;
+    } else if (x.s === 'nao_realizada') {
+      m.status = 'nao_realizada'; m.checkout = x.co; out.nao_realizadas++;
+    } else if (x.s === 'no_local') { m.status = 'no_local'; out.no_local++; }
+  }
+  for (const q of r.enc || []) {
+    if (state.solicitacoes.some((z) => z.id === q.id)) continue;
+    const e = upsertEstab(q.e); if (!e) continue;
+    state.solicitacoes.push({ id: q.id, estab_id: e.id, vistoriador_id: r.vid, data: r.d, ts: q.ts, status: 'pendente', obs: q.obs || '' });
+    out.encaixes++;
+  }
+  for (const c of r.cor || []) {
+    if (state.correcoes.some((z) => z.id === c.id)) continue;
+    const e = upsertEstab(c.e); if (!e) continue;
+    state.correcoes.push({ id: c.id, estab_id: e.id, missao_id: c.missao_id, lat: c.lat, lng: c.lng, vistoriador_id: r.vid, ts: c.ts, status: 'pendente' });
+    out.correcoes++;
+  }
+  registrar('receber_resultados', `${r.vid}:${r.d}`); salvar();
+  return out;
 }

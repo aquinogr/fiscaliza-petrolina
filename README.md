@@ -1,82 +1,60 @@
 # Fiscaliza Petrolina
 
-Planejamento das vistorias de fiscalização e regularização em Petrolina/PE: distribuição das equipes por setor no mapa, roteiro do dia no celular do vistoriador, check-in por geolocalização e sugestões automáticas de onde fiscalizar.
+Planejamento das fiscalizações do CBMPE em Petrolina/PE: fila de missões, distribuição da equipe do dia pelo mapa, roteiro no celular do vistoriador, check-in por geolocalização e sugestões automáticas de onde fiscalizar.
 
 Site: **https://aquinogr.github.io/fiscaliza-petrolina/**
 
-> Versão de demonstração. Os dados são fictícios e ficam guardados só no aparelho de quem abre o site. Para a equipe usar de verdade, cada um no seu celular, é preciso ligar o banco de dados (veja "Próximo passo").
+Equipe: SGT SOBRINHO, SGT BORGES, CB DA LUZ e CB BERNARDO (editável em Ajustes > Equipe).
 
-## O que cada perfil faz
+## De onde vêm os dados
 
-**Oficial (painel com mapa)**
-- Escala do dia: escolhe a equipe de cada setor e distribui a fila automaticamente, respeitando prioridade, prazo e o limite de missões por vistoriador.
-- Fila: regularizações recebidas no SAC, denúncias, retornos de notificação e eventos, com prazo e antiguidade.
-- Sugestões: estabelecimentos da base pública com maior prioridade, com o motivo de cada ponto do escore. Aceitar vira missão; rejeitar ensina o motor.
-- Eventos temporários: agenda com contagem regressiva, alerta para evento anunciado sem solicitação e ficha de cada local recorrente (capacidade autorizada, saídas, acesso de viatura, ponto de água, pendências).
-- Aprovações: encaixes pedidos em campo e correções de localização.
-- Relatório do dia pronto para colar no WhatsApp.
-- Ajustes: raio do check-in, missões por dia, prazo do retorno, cotas, pesos do escore, equipe, setores (desenhar no mapa ou importar GeoJSON do QGIS) e backup.
+Nenhum dado é fictício.
 
-**Vistoriador (celular)**
-- Roteiro do dia na ordem de menor deslocamento, com botões para Google Maps e Waze.
-- Distância até o ponto em tempo real. O check-in vale dentro do raio (150 m por padrão); fora dele, pede justificativa e permite sugerir a localização correta.
-- Resultado da vistoria em lista fechada, documento visto no local, observações e até 4 fotos. Notificação gera retorno automático na fila do oficial.
-- "Perto de mim": estabelecimentos prioritários num raio de 700 m para pedir encaixe.
-- Funciona sem sinal: o site abre offline e os registros ficam guardados até a conexão voltar.
-- A localização é lida só no momento do check-in e enquanto a tela de distância está aberta. Não há rastreamento contínuo.
+- **MOCI** (Mapa de OCI do CAT Sertão): o painel lê as edificações cadastradas, com situação do AVCB, porte, reserva de incêndio, hidrantes, sprinklers e caldeira. É só leitura: nada é gravado no MOCI. Atualiza sozinho ao abrir o painel, no máximo a cada 30 minutos. Por padrão entram só as de Petrolina (Ajustes > MOCI).
+- **Base pública** (Receita Federal + IBGE): estabelecimentos ativos de Petrolina com atividade de interesse, localizados no mapa pelos endereços do Censo 2022. Uma rotina do GitHub Actions monta a base todo dia 20 e grava `data/estabelecimentos.geojson` no próprio site.
+- **Campo**: cada vistoria registra a situação documental vista no local, e esse registro vai formando o histórico de cada estabelecimento.
 
-## Testar agora
+## Como funciona no dia a dia
 
-1. Abra o site e entre como **oficial**.
-2. Numa segunda aba, entre como um **vistoriador**. O que um faz aparece na tela do outro.
-3. No celular, para cair direto no perfil de um vistoriador: `https://aquinogr.github.io/fiscaliza-petrolina/?vistoriador=v1` (v1 a v4).
-4. Longe de Petrolina? Ligue **Simular GPS** na barra amarela e toque no mapa para escolher sua posição.
-5. Para recomeçar: Ajustes > Dados > Restaurar dados de exemplo.
+1. **Fila.** Na aba Sugestões, o bloco MOCI põe os AVCBs vencidos na fila com prioridade alta (e, se quiser, os sem AVCB). Denúncias, retornos e fiscalizações aceitas nas sugestões também entram na fila.
+2. **Equipe do dia.** Na aba Escala, marque quem está de serviço e toque em **Distribuir a fila por proximidade**. O sistema divide as missões pela localização, até o limite por vistoriador, e ordena cada roteiro pela menor distância a partir da base.
+3. **Roteiro no celular.** Em cada roteiro, toque em **Enviar roteiro**. Vai pelo WhatsApp um link; o vistoriador abre no celular e vê o roteiro, o mapa e os botões de navegação.
+4. **Check-in e resultado.** No local, o check-in confere a distância (150 m por padrão). Fora do raio, pede justificativa e permite sugerir a localização correta. O resultado vem de uma lista fechada, com documento visto, observações e fotos. Notificação gera retorno automático na fila.
+5. **Volta ao painel.** No fim do dia, o vistoriador toca em **Enviar resultados ao oficial**. Quando o oficial abre o link, os resultados, os pedidos de encaixe e as correções de local entram no painel. Abrir o mesmo link duas vezes não duplica nada.
+6. **Relatório.** A aba Relatório monta o resumo do dia pronto para o WhatsApp.
 
-Para instalar no celular: abra o site no Chrome (Android) ou Safari (iPhone) e use "Adicionar à tela inicial".
+Os links levam os dados depois do `#`, que não vai a servidor nenhum. Envie cada roteiro só ao vistoriador dele. As fotos ficam no celular de quem tirou.
 
-## Publicar no GitHub Pages (uma vez)
+Os dados ficam no aparelho de cada um até o banco de dados ser ligado. Faça backup de vez em quando em Ajustes > Dados.
 
-No repositório: **Settings > Pages > Build and deployment > Deploy from a branch**, escolha `main` e `/ (root)` e salve. Em um ou dois minutos o site fica no endereço acima.
+## Regularização (versão 2.0)
 
-## Regularizações do SAC
+A aba Regularização está desativada. O plano é o oficial cadastrar a regularização num chat de IA no painel, enviando um **PDF único** com documentos do proprietário, memorial descritivo, croqui, requerimentos e classificação de risco (I, II ou III). A IA lê o PDF, propõe os dados úteis e as coordenadas, o oficial confere e a vistoria vai para a caixa do vistoriador. Como o PDF traz dados pessoais, essa parte exige o banco de dados com controle de acesso.
 
-O site não acessa o sac.bombeiros.pe.gov.br. As regularizações entram quando o oficial cadastra a missão (Fila > Nova missão), informando o número do processo e o prazo. O cadastro procura o estabelecimento na base pelo nome ou CNPJ e marca o ponto no mapa. Com o tempo, o resultado de cada vistoria vai formando a situação documental de cada estabelecimento, alimentada pelo campo.
+## Publicação
 
-## Rotina automática da base pública
+O site é publicado pelo GitHub Pages a partir da branch `main`. A rotina da base pública está em **Actions > Atualizar base pública**. Ela roda todo dia 20 e também pode ser disparada à mão em "Run workflow". A fonte oficial é o portal de dados abertos da Receita Federal; quando ele está fora do ar ou mudou de endereço, a rotina usa o espelho público da Casa dos Dados, que mantém os mesmos arquivos.
 
-O arquivo `.github/workflows/atualizar-base.yml` roda todo dia 20 (e pode ser disparado à mão em **Actions > Atualizar base pública > Run workflow**). Ele:
+A base publicada só tem dados públicos da Receita: CNPJ, nome fantasia, endereço e atividade. Não há telefone, e-mail ou sócios, e a razão social de empresário individual (que costuma ser o nome da pessoa) não é usada.
 
-1. baixa os dados abertos de CNPJ da Receita Federal do mês mais recente;
-2. guarda só os estabelecimentos **ativos** de Petrolina com atividade de interesse (tabela `data/cnae.json`, a mesma usada pelo site);
-3. localiza cada endereço pelo CNEFE do Censo 2022 do IBGE (CEP e número, depois rua e número, por último o centro do CEP);
-4. gera o arquivo `estabelecimentos.geojson` como artefato da execução e, se o banco estiver ligado, atualiza a tabela direto.
-
-Enquanto o banco não estiver ligado: baixe o artefato **estabelecimentos-petrolina** na página da execução e importe em **Ajustes > Dados > Importar base pública**.
-
-Proteção de dados: a rotina não guarda telefone, e-mail nem sócios, e não usa a razão social de empresário individual (inclui MEI), que costuma ser o nome da pessoa. O artefato de um repositório público pode ser baixado por qualquer pessoa logada no GitHub; ele contém só dados públicos da Receita.
-
-O GitHub desliga rotinas agendadas de repositórios públicos sem nenhuma atividade por 60 dias. Se isso acontecer, reative em Actions.
-
-As categorias de `data/cnae.json` servem para priorizar sugestões. Não equivalem à classificação de ocupação das normas de segurança contra incêndio.
+O GitHub desliga rotinas agendadas de repositórios sem atividade por 60 dias. Se acontecer, reative em Actions.
 
 ## Próximo passo: banco de dados (Supabase, gratuito)
 
-Com o banco ligado, cada pessoa entra com o próprio login, o vistoriador vê só as próprias missões e o painel do oficial atualiza em tempo real.
+Com o banco, cada pessoa entra com o próprio login, as missões chegam ao celular sem precisar de link, e a versão 2.0 pode guardar os PDFs com segurança.
 
 1. Crie uma conta e um projeto em supabase.com.
-2. Em **SQL Editor**, rode o arquivo `supabase/schema.sql` (uma vez).
-3. Em **Authentication > Users**, crie os usuários e ligue cada um ao seu perfil (exemplo no fim do `schema.sql`).
-4. Em **Settings > API**, copie a *Project URL* e a chave *anon public*. Essas duas vão no site.
-5. Para a rotina mensal gravar direto no banco: no GitHub, **Settings > Secrets and variables > Actions**, crie `SUPABASE_URL` e `SUPABASE_SERVICE_KEY` (a chave *service_role*, que nunca vai para o site).
+2. Em **SQL Editor**, rode `supabase/schema.sql` (uma vez).
+3. Em **Authentication > Users**, crie os usuários e ligue cada um ao perfil (exemplo no fim do `schema.sql`).
+4. Em **Settings > API**, copie a *Project URL* e a chave *anon public*.
+5. No GitHub, em **Settings > Secrets and variables > Actions**, crie `SUPABASE_URL` e `SUPABASE_SERVICE_KEY` (chave *service_role*, que nunca vai para o site).
 
 ## Cuidados
 
-- Nenhum dado operacional fica no repositório. No plano gratuito o GitHub Pages exige repositório público, então só o código é público.
 - Ferramenta pessoal usada em serviço: dê ciência à chefia imediata antes de a equipe depender dela.
-- Os setores de exemplo são ilustrativos. Substitua pelos setores reais.
-- A busca de endereço no cadastro usa o OpenStreetMap e é aproximada. Confira e arraste o marcador.
+- As categorias de `data/cnae.json` servem para priorizar sugestões. Não equivalem à classificação de ocupação das normas de segurança contra incêndio.
 - Geolocalização de celular pode ser falsificada. O check-in é um registro de apoio, não prova pericial.
+- Para testar o GPS longe de Petrolina, abra o app do vistoriador com `?simular=1` no fim do endereço.
 
 ## Estrutura
 
@@ -84,10 +62,11 @@ Com o banco ligado, cada pessoa entra com o próprio login, o vistoriador vê s�
 index.html, css/, js/          site (sem etapa de compilação)
   js/admin.js                  painel do oficial
   js/field.js                  app do vistoriador
-  js/store.js                  dados e regras (modo demonstração: localStorage)
+  js/store.js                  dados, distribuição e links de roteiro/resultado
+  js/moci.js                   leitura do MOCI
   js/score.js                  motor de sugestões
 data/cnae.json                 atividades de interesse e categorias
-sw.js, manifest.webmanifest    funcionamento offline e instalação no celular
+data/estabelecimentos.geojson  base pública (gerada pela rotina mensal)
 pipeline/atualizar_base.py     rotina mensal (só biblioteca padrão do Python)
 supabase/schema.sql            banco de dados com regras de acesso
 ```

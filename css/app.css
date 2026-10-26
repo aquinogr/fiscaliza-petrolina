@@ -415,3 +415,13 @@ body[data-papel="vistoriador"] { background: var(--bg); }
 .result-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.45rem; }
 .result-opt { min-height: 48px; padding: 0.45rem 0.6rem; border-radius: var(--r-sm); border: 1.5px solid var(--line); background: var(--surface); font-weight: 600; cursor: pointer; text-align: left; }
 .result-opt[aria-checked="true"] { border-color: var(--farda); background: var(--farda); color: #fff; }
+
+/* equipe do dia e aba desativada */
+.chips-equipe { display: flex; flex-wrap: wrap; gap: 0.45rem; }
+.chip-v { display: inline-flex; align-items: center; gap: 0.45rem; min-height: 38px; padding: 0.3rem 0.75rem; border-radius: 999px; border: 1.5px dashed var(--line); background: var(--surface-2); color: var(--muted); font-weight: 600; cursor: pointer; }
+.chip-v.on { border: 1.5px solid var(--c); background: color-mix(in srgb, var(--c) 10%, var(--surface)); color: var(--ink); }
+.chip-v .folga { font-size: 0.75rem; font-weight: 500; }
+.chip-v:not(.on) .team-dot { opacity: 0.4; }
+.tab-off { color: color-mix(in srgb, var(--muted) 70%, transparent); cursor: help; }
+.tab-off[aria-disabled="false"] { color: var(--muted); cursor: pointer; }
+.tag-v2 { font-size: 0.7rem; padding: 0 0.35rem; background: var(--surface-2); color: var(--muted); }

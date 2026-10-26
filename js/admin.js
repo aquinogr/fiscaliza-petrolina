@@ -2,13 +2,14 @@
 /* global L */
 import * as st from './store.js';
 import { h, mount, clear, sheet, toast, field, select, chip, today, addDays, fmtDate, fmtTime, fmtDist, relDays, diffDays, copyText, confirmar, debounce } from './ui.js';
-import { TIPOS, FILAS, STATUS, PRIORIDADES, RESULTADO_NOME, SITUACAO_NOME, MOTIVOS_REJEICAO, STATUS_EVENTO, STATUS_EVENTO_NOME, RESULTADOS_IMPRODUTIVOS, formatarCNPJ } from './dominio.js';
+import { TIPOS, TIPOS_CADASTRO, FILAS, STATUS, PRIORIDADES, RESULTADO_NOME, SITUACAO_NOME, MOTIVOS_REJEICAO, STATUS_EVENTO, STATUS_EVENTO_NOME, RESULTADOS_IMPRODUTIVOS, formatarCNPJ } from './dominio.js';
 import { gerarSugestoes, scoreDe, cnaeInfo, semanaComEventoGrande } from './score.js';
-import { criarMapa, iconeMissao, iconeFila, iconeSugestao, iconeLocal, iconeBase, iconePonto } from './map.js';
+import { criarMapa, iconeMissao, iconeFila, iconeSugestao, iconeLocal, iconeBase, iconePonto, PETROLINA } from './map.js';
 import { geocodificar, centroide, dist, extensaoRota } from './geo.js';
 import { fotoURL } from './fotos.js';
 import { marca } from './marca.js';
 import { buscarMoci, linhasMoci, MOCI_SITE } from './moci.js';
+import { linkPara, whatsapp } from './link.js';
 
 const CINZA = '#94A3B8';
 
@@ -24,9 +25,13 @@ export function iniciarAdmin(root, { sair }) {
   const mudarDia = (n) => { ui.data = addDays(ui.data, n); inputData.value = ui.data; render(); };
   const rotuloDia = h('span', { class: 'date-rel' });
   const abas = [['hoje', 'Escala'], ['fila', 'Fila'], ['sugestoes', 'Sugestões'], ['eventos', 'Eventos'], ['relatorio', 'Relatório']];
+  const regAtiva = !!st.S().config.regularizacao_ativa;
   const tabs = h('nav', { class: 'tabs', role: 'tablist' }, abas.map(([k, l]) => h('button', {
     role: 'tab', type: 'button', class: 'tab', dataset: { aba: k }, onclick: () => { ui.aba = k; renderPainel(); },
-  }, h('span', {}, l), h('span', { class: 'tab-n' }))));
+  }, h('span', {}, l), h('span', { class: 'tab-n' }))),
+  h('button', { role: 'tab', type: 'button', class: 'tab tab-off', 'aria-disabled': regAtiva ? 'false' : 'true', title: 'Disponível na versão 2.0',
+    onclick: () => toast('A aba Regularização será ativada na versão 2.0: cadastro por PDF lido por IA e distribuição das vistorias de regularização.') },
+  h('span', {}, 'Regularização'), h('span', { class: 'tag tag-v2' }, 'v2.0')));
   const corpo = h('div', { class: 'panel-body' });
   const mapaEl = h('div', { class: 'map', id: 'mapa-admin' });
   const faixaMapa = h('div', { class: 'map-banner', hidden: true });
@@ -42,7 +47,7 @@ export function iniciarAdmin(root, { sair }) {
         h('button', { class: 'icon-btn on-dark', type: 'button', 'aria-label': 'Próximo dia', onclick: () => mudarDia(1) }, '›'),
         rotuloDia),
       h('div', { class: 'top-actions' },
-        st.S().modo === 'demo' ? h('span', { class: 'demo-badge', title: 'Os dados ficam só neste aparelho' }, 'Demonstração') : null,
+        h('span', { class: 'demo-badge', title: 'Até ligar o banco de dados, os dados ficam guardados neste computador. Faça backup em Ajustes > Dados.' }, 'Dados neste aparelho'),
         h('button', { class: 'btn btn-ghost on-dark', type: 'button', onclick: () => abrirAjustes() }, 'Ajustes'),
         h('button', { class: 'btn btn-ghost on-dark', type: 'button', onclick: sair }, 'Trocar perfil'))),
     h('aside', { class: 'panel' }, tabs, corpo),
@@ -50,6 +55,7 @@ export function iniciarAdmin(root, { sair }) {
 
   // ---------- mapa ----------
   const map = criarMapa(mapaEl, { zoom: 13 });
+  const canvas = L.canvas({ padding: 0.3 });
   const G = {
     setores: L.layerGroup().addTo(map), rotas: L.layerGroup().addTo(map), missoes: L.layerGroup().addTo(map),
     fila: L.layerGroup().addTo(map), sugestoes: L.layerGroup(), locais: L.layerGroup().addTo(map),
@@ -62,7 +68,7 @@ export function iniciarAdmin(root, { sair }) {
     if (ui.desenho) { ui.desenho.pontos.push([+ev.latlng.lat.toFixed(6), +ev.latlng.lng.toFixed(6)]); desenharRascunho(); return; }
     if (ui.escolhendoBase) {
       st.salvarConfig({ base: { lat: +ev.latlng.lat.toFixed(6), lng: +ev.latlng.lng.toFixed(6) } });
-      ui.escolhendoBase = false; faixaMapa.hidden = true; mapaEl.classList.remove('drawing'); toast('Base atualizada.', 'ok');
+      ui.escolhendoBase = false; faixaMapa.hidden = true; mapaEl.classList.remove('drawing'); st.salvarConfig({ base_ajustada: true }); toast('Base atualizada.', 'ok');
     }
   });
 
@@ -106,7 +112,7 @@ export function iniciarAdmin(root, { sair }) {
 
   function contadoresAbas(sugs) {
     const n = { fila: st.fila().length, sugestoes: sugs.length, eventos: S().eventos.filter((e) => e.status === 'nao_recebido' && diffDays(e.inicio, today()) >= 0 && diffDays(e.inicio, today()) <= 15).length };
-    tabs.querySelectorAll('.tab').forEach((b) => {
+    tabs.querySelectorAll('.tab[data-aba]').forEach((b) => {
       const k = b.dataset.aba;
       b.setAttribute('aria-selected', String(k === ui.aba));
       b.classList.toggle('active', k === ui.aba);
@@ -129,56 +135,60 @@ export function iniciarAdmin(root, { sair }) {
   // ---------- aba: escala do dia ----------
   function telaHoje() {
     const pend = [...S().solicitacoes.filter((q) => q.status === 'pendente'), ...S().correcoes.filter((c) => c.status === 'pendente')];
-    const esc = st.escalaDo(ui.data);
     const filaN = st.fila();
-    const doDia = st.missoesDoDia(ui.data);
+    const equipe = st.equipeDo(ui.data);
     const evento = semanaComEventoGrande(S());
+    const cap = S().config.capacidade_dia;
+    const vagas = equipe.reduce((a, vid) => a + Math.max(0, cap - st.missoesDo(vid, ui.data).length), 0);
+    const base = st.infoBasePublica();
 
     const blocoAprov = pend.length ? h('section', { class: 'block block-alert' },
       h('h3', {}, `Para aprovar (${pend.length})`),
       pend.map((x) => ('lat' in x ? cardCorrecao(x) : cardEncaixe(x)))) : null;
 
-    const linhasSetor = S().setores.map((s) => {
-      const vid = esc[s.id] || '';
-      const nFila = filaN.filter((m) => st.setorDoPonto(st.pontoMissao(m))?.id === s.id).length;
-      return h('div', { class: 'escala-row' },
-        h('span', { class: 'swatch', style: { background: vid ? corV(vid) : 'transparent', borderColor: vid ? corV(vid) : CINZA } }),
-        h('button', { class: 'link', type: 'button', onclick: () => map.flyToBounds(L.latLngBounds(s.poligono), { padding: [30, 30], duration: 0.6 }) }, s.nome),
-        h('span', { class: 'muted small' }, nFila ? `${nFila} na fila` : 'fila vazia'),
-        select(opcoesVist(false).length ? [['', 'Sem equipe'], ...opcoesVist(false)] : [['', 'Sem equipe']], vid, {
-          'aria-label': `Equipe do setor ${s.nome}`, onchange: (e) => st.definirEscala(ui.data, s.id, e.target.value),
-        }));
-    });
-
-    const blocoEscala = h('section', { class: 'block' },
-      h('div', { class: 'block-head' }, h('h3', {}, 'Setores e equipes'), h('span', { class: 'muted small' }, fmtDate(ui.data, { long: true }))),
-      linhasSetor.length ? linhasSetor : h('p', { class: 'empty' }, 'Nenhum setor cadastrado. Desenhe os setores em Ajustes.'),
-      h('div', { class: 'row gap' },
+    const blocoEquipe = h('section', { class: 'block' },
+      h('div', { class: 'block-head' }, h('h3', {}, 'Equipe do dia'), h('span', { class: 'muted small' }, fmtDate(ui.data, { long: true }))),
+      h('div', { class: 'chips-equipe' }, S().vistoriadores.filter((v) => v.ativo !== false).map((v) => {
+        const on = equipe.includes(v.id);
+        return h('button', { type: 'button', class: `chip-v${on ? ' on' : ''}`, style: { '--c': v.cor }, 'aria-pressed': String(on), title: on ? 'Escalado. Toque para marcar folga.' : 'De folga. Toque para escalar.', onclick: () => st.alternarEquipe(ui.data, v.id) },
+          h('span', { class: 'team-dot' }), v.nome, on ? null : h('span', { class: 'folga' }, 'folga'));
+      })),
+      h('div', { class: 'row gap wrap' },
         h('button', {
-          class: 'btn btn-primary', type: 'button', disabled: !Object.keys(esc).length || !filaN.length,
-          onclick: () => { const n = st.distribuirAutomatico(ui.data); toast(n ? `${n} missão(ões) da fila distribuídas pelos setores.` : 'Nenhuma missão da fila cabe nos setores escalados.', n ? 'ok' : 'info'); },
-        }, 'Distribuir fila pelos setores'),
+          class: 'btn btn-primary', type: 'button', disabled: !filaN.length || !vagas,
+          onclick: () => { const n = st.distribuirPorProximidade(ui.data); toast(n ? `${n} missão(ões) divididas entre ${equipe.length} vistoriador(es) pela localização.` : 'Nada para distribuir.', n ? 'ok' : 'info'); },
+        }, `Distribuir a fila por proximidade (${Math.min(filaN.length, vagas)})`),
         h('button', { class: 'btn', type: 'button', onclick: () => novaMissao() }, 'Nova missão')),
-      h('p', { class: 'hint' }, `Cada equipe recebe até ${S().config.capacidade_dia} missões por dia, por ordem de prioridade e prazo, só dentro do setor em que foi escalada.`),
-      st.vencidosMoci().length ? h('p', { class: 'note note-warn' }, `${st.vencidosMoci().length} AVCB(s) vencido(s) no MOCI ainda fora da fila. `, h('button', { class: 'link', type: 'button', onclick: () => { ui.aba = 'sugestoes'; renderPainel(); } }, 'Ver no MOCI')) : null);
+      h('p', { class: 'hint' }, filaN.length
+        ? `Divide a fila entre a equipe do dia pela localização, até ${cap} missões por vistoriador, começando pela prioridade alta (AVCB vencido, denúncias, retornos). Depois, envie o roteiro de cada um pelo WhatsApp.`
+        : 'A fila está vazia. Ponha os AVCBs vencidos do MOCI na fila (aba Sugestões) ou cadastre uma nova missão.'),
+      st.vencidosMoci().length ? h('p', { class: 'note note-warn' }, `${st.vencidosMoci().length} AVCB(s) vencido(s) no MOCI ainda fora da fila. `, h('button', { class: 'link', type: 'button', onclick: () => { ui.aba = 'sugestoes'; renderPainel(); } }, 'Ver')) : null,
+      !base ? h('p', { class: 'note' }, 'A base pública de estabelecimentos (Receita Federal + IBGE) ainda está sendo preparada pela rotina mensal. Enquanto isso, as sugestões usam o MOCI.') : null,
+      !S().config.base_ajustada ? h('p', { class: 'hint' }, 'Dica: posicione a base de partida das equipes em Ajustes, para os roteiros saírem do quartel.') : null,
+      evento ? h('p', { class: 'note note-warn' }, `Evento grande nos próximos 7 dias: ${evento.nome}, ${fmtDate(evento.inicio, { short: true })}. Reserve equipe para a fiscalização.`) : null);
 
-    // composição do dia x cotas
-    const cont = { solicitada: 0, urgencia: 0, proativa: 0 };
-    doDia.forEach((m) => { cont[TIPOS[m.tipo]?.fila || 'solicitada']++; });
-    const total = doDia.length || 1;
-    const cotas = S().config.cotas;
-    const blocoCotas = doDia.length ? h('section', { class: 'block' },
-      h('div', { class: 'block-head' }, h('h3', {}, 'Composição do dia'), h('span', { class: 'muted small' }, `${doDia.length} missões`)),
-      h('div', { class: 'stackbar', role: 'img', 'aria-label': 'Distribuição das missões por fila' },
-        Object.keys(cont).map((k) => h('span', { class: `seg seg-${k}`, style: { flexGrow: String(cont[k] || 0.0001) }, title: `${FILAS[k]}: ${cont[k]}` }))),
-      h('div', { class: 'cotas' }, Object.keys(cont).map((k) => h('div', { class: 'cota' },
-        h('span', { class: `dot seg-${k}` }), h('span', {}, FILAS[k]),
-        h('strong', {}, `${Math.round((cont[k] / total) * 100)}%`), h('span', { class: 'muted small' }, `meta ${cotas[k]}%`)))),
-      evento ? h('p', { class: 'note note-warn' }, `Evento grande nos próximos 7 dias (${evento.nome}, ${fmtDate(evento.inicio, { short: true })}). Vale segurar a cota proativa e reservar equipe para a vistoria do evento.`) : null) : null;
+    const blocoSetores = S().setores.length ? (() => {
+      const esc = st.escalaDo(ui.data);
+      return h('section', { class: 'block' },
+        h('div', { class: 'block-head' }, h('h3', {}, 'Setores fixos'), h('span', { class: 'muted small' }, 'opcional')),
+        S().setores.map((s) => {
+          const vid = esc[s.id] || '';
+          const nFila = filaN.filter((m) => st.setorDoPonto(st.pontoMissao(m))?.id === s.id).length;
+          return h('div', { class: 'escala-row' },
+            h('span', { class: 'swatch', style: { background: vid ? corV(vid) : 'transparent', borderColor: vid ? corV(vid) : CINZA } }),
+            h('button', { class: 'link', type: 'button', onclick: () => map.flyToBounds(L.latLngBounds(s.poligono), { padding: [30, 30], duration: 0.6 }) }, s.nome),
+            h('span', { class: 'muted small' }, nFila ? `${nFila} na fila` : 'fila vazia'),
+            select([['', 'Sem equipe'], ...opcoesVist(false)], vid, { 'aria-label': `Equipe do setor ${s.nome}`, onchange: (e) => st.definirEscala(ui.data, s.id, e.target.value) }));
+        }),
+        h('button', {
+          class: 'btn btn-small', type: 'button', disabled: !Object.keys(esc).length || !filaN.length,
+          onclick: () => { const n = st.distribuirAutomatico(ui.data); toast(n ? `${n} missão(ões) distribuídas pelos setores.` : 'Nenhuma missão da fila cabe nos setores escalados.', n ? 'ok' : 'info'); },
+        }, 'Distribuir pelos setores'));
+    })() : null;
 
-    const equipes = S().vistoriadores.filter((v) => v.ativo !== false).map((v) => cardEquipe(v));
+    const equipes = S().vistoriadores.filter((v) => v.ativo !== false && (equipe.includes(v.id) || st.missoesDo(v.id, ui.data).length)).map((v) => cardEquipe(v));
 
-    return h('div', { class: 'stack' }, blocoAprov, blocoEscala, blocoCotas, h('h3', { class: 'section-title' }, 'Equipes'), equipes);
+    return h('div', { class: 'stack' }, blocoAprov, blocoEquipe, blocoSetores, h('h3', { class: 'section-title' }, 'Roteiros'), equipes.length ? equipes : h('p', { class: 'empty' }, 'Ninguém escalado neste dia.'));
   }
 
   function cardEquipe(v) {
@@ -187,18 +197,38 @@ export function iniciarAdmin(root, { sair }) {
     const km = extensaoRota(S().config.base, lista.map(st.pontoMissao).filter(Boolean)) / 1000;
     const setores = Object.entries(st.escalaDo(ui.data)).filter(([, vid]) => vid === v.id).map(([sid]) => st.setor(sid)?.nome).filter(Boolean);
     const ultimo = lista.filter((m) => m.checkin).sort((a, b) => b.checkin.ts - a.checkin.ts)[0];
+    const folga = !st.equipeDo(ui.data).includes(v.id);
     return h('section', { class: 'team', style: { '--c': v.cor } },
       h('div', { class: 'team-head' },
         h('span', { class: 'team-dot' }),
-        h('div', { class: 'grow' }, h('strong', {}, v.nome), h('div', { class: 'muted small' }, setores.length ? setores.join(', ') : 'Sem setor escalado')),
+        h('div', { class: 'grow' }, h('strong', {}, v.nome), h('div', { class: 'muted small' }, folga ? 'De folga neste dia' : setores.length ? setores.join(', ') : lista.length ? `${lista.length} parada(s)` : 'Sem missões ainda')),
         h('div', { class: 'team-prog' }, h('strong', {}, `${feitas}/${lista.length}`), h('span', { class: 'muted small' }, lista.length ? `rota ~${km.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} km` : ''))),
       lista.length ? h('div', { class: 'progress' }, h('span', { style: { width: `${(feitas / lista.length) * 100}%` } })) : null,
       ultimo ? h('p', { class: 'muted small' }, `Último check-in às ${fmtTime(ultimo.checkin.ts)}: ${st.estab(ultimo.estab_id)?.nome || ''}`) : null,
       h('ol', { class: 'mlist' }, lista.map((m) => linhaMissao(m))),
-      lista.length === 0 ? h('p', { class: 'empty' }, 'Sem missões neste dia.') : null,
-      h('div', { class: 'row gap' },
+      h('div', { class: 'row gap wrap' },
+        lista.length ? h('button', { class: 'btn btn-small btn-primary', type: 'button', onclick: () => enviarRoteiro(v) }, 'Enviar roteiro') : null,
         lista.filter((m) => m.status === 'pendente').length > 1 ? h('button', { class: 'btn btn-small', type: 'button', onclick: () => { st.reordenarRota(v.id, ui.data); toast(`Roteiro de ${v.nome} reorganizado pela menor distância.`, 'ok'); } }, 'Otimizar roteiro') : null,
         h('button', { class: 'btn btn-small', type: 'button', onclick: () => escolherDaFila(v) }, 'Adicionar da fila')));
+  }
+
+  async function enviarRoteiro(v) {
+    const lista = st.missoesDo(v.id, ui.data);
+    const link = await linkPara('rota', st.montarRoteiro(v.id, ui.data));
+    const linhas = lista.map((m) => { const e = st.estab(m.estab_id); return `${m.ordem}. ${e?.nome || ''}${e?.endereco ? ` (${e.endereco})` : ''}${m.prioridade === 'alta' ? ' [prioridade alta]' : ''}`; });
+    const texto = [`*Roteiro de ${fmtDate(ui.data, { long: true })}*`, `${v.nome}: ${lista.length} parada(s)`, '', ...linhas, '', 'Abra o link no celular para ver o mapa e fazer os check-ins:', link].join('\n');
+    sheet({
+      title: `Enviar roteiro: ${v.nome}`,
+      body: h('div', { class: 'stack' },
+        h('p', {}, `${lista.length} parada(s) em ${fmtDate(ui.data, { long: true })}. O vistoriador abre o link no celular, faz os check-ins e, no fim do dia, devolve os resultados por outro link.`),
+        h('textarea', { class: 'report', rows: Math.min(14, linhas.length + 6), readonly: true }, texto),
+        v.whatsapp ? null : h('p', { class: 'hint' }, 'Cadastre o WhatsApp do vistoriador em Ajustes > Equipe para a conversa abrir direto.'),
+        h('p', { class: 'hint' }, 'O link leva nomes e endereços do roteiro. Envie só para o vistoriador.')),
+      actions: [
+        h('button', { class: 'btn', type: 'button', onclick: () => copyText(link).then(() => toast('Link copiado.', 'ok')) }, 'Copiar link'),
+        h('a', { class: 'btn btn-primary', href: whatsapp(texto, v.whatsapp), target: '_blank', rel: 'noopener' }, 'Enviar pelo WhatsApp'),
+      ],
+    });
   }
 
   function linhaMissao(m) {
@@ -268,10 +298,10 @@ export function iniciarAdmin(root, { sair }) {
     return h('div', { class: 'stack' },
       h('div', { class: 'row gap wrap' },
         h('button', { class: 'btn btn-primary', type: 'button', onclick: () => novaMissao() }, 'Nova missão'),
-        select([['', 'Todos os tipos'], ...Object.entries(TIPOS).map(([k, t]) => [k, t.nome])], ui.filtroTipo, { 'aria-label': 'Filtrar por tipo', onchange: (e) => { ui.filtroTipo = e.target.value; renderPainel(); } })),
+        select([['', 'Todos os tipos'], ...Object.entries(TIPOS).filter(([, t]) => !t.v2).map(([k, t]) => [k, t.nome])], ui.filtroTipo, { 'aria-label': 'Filtrar por tipo', onchange: (e) => { ui.filtroTipo = e.target.value; renderPainel(); } })),
       vencendo ? h('p', { class: 'note note-warn' }, `${vencendo} missão(ões) com prazo vencido ou vencendo em até 2 dias.`) : null,
-      h('p', { class: 'hint' }, 'Regularizações recebidas no SAC entram aqui quando você as cadastra. Ordem: prioridade, depois prazo, depois antiguidade.'),
-      lista.length ? lista.map((m) => cardFila(m)) : h('p', { class: 'empty' }, 'Fila vazia. Cadastre uma nova missão quando receber um processo.'));
+      h('p', { class: 'hint' }, 'AVCBs vencidos do MOCI, denúncias, retornos de notificação e fiscalizações aceitas nas sugestões. Ordem: prioridade, depois prazo (ou há quanto tempo o AVCB venceu), depois antiguidade.'),
+      lista.length ? lista.map((m) => cardFila(m)) : h('p', { class: 'empty' }, 'Fila vazia. Ponha os AVCBs vencidos do MOCI na fila (aba Sugestões) ou cadastre uma denúncia em Nova missão.'));
   }
 
   function cardFila(m) {
@@ -344,7 +374,7 @@ export function iniciarAdmin(root, { sair }) {
         h('button', { class: 'btn btn-small', type: 'button', disabled: ui.mociCarregando, onclick: () => sincronizarMoci() }, 'Atualizar do MOCI'),
         h('button', {
           class: 'btn btn-small btn-primary', type: 'button', disabled: !(venc || (ui.incluirSemAvcb && semAvcb)),
-          onclick: () => { const n = st.filaDeVencidos({ incluirSemAvcb: ui.incluirSemAvcb }); toast(n ? `${n} missão(ões) na fila, com prioridade alta para os vencidos. Use "Distribuir fila pelos setores" na Escala.` : 'Nada novo para pôr na fila.', n ? 'ok' : 'info'); },
+          onclick: () => { const n = st.filaDeVencidos({ incluirSemAvcb: ui.incluirSemAvcb }); toast(n ? `${n} missão(ões) na fila, com prioridade alta para os vencidos. Na aba Escala, use "Distribuir a fila por proximidade".` : 'Nada novo para pôr na fila.', n ? 'ok' : 'info'); },
         }, `Pôr na fila (${venc + (ui.incluirSemAvcb ? semAvcb : 0)})`),
         h('label', { class: 'check small' }, h('input', { type: 'checkbox', checked: ui.incluirSemAvcb, onchange: (e) => { ui.incluirSemAvcb = e.target.checked; renderPainel(); } }), `Incluir sem AVCB (${semAvcb})`)));
   }
@@ -418,10 +448,11 @@ export function iniciarAdmin(root, { sair }) {
       h('div', { class: 'row gap wrap' },
         h('button', { class: 'btn btn-primary', type: 'button', onclick: () => editarEvento() }, 'Novo evento'),
         h('button', { class: 'btn', type: 'button', onclick: () => editarLocal() }, 'Novo local')),
-      h('p', { class: 'hint' }, 'Inclua também os eventos vistos na divulgação (redes sociais, rádio, cartazes). Evento anunciado sem solicitação aparece em vermelho.'),
+      h('p', { class: 'hint' }, 'Cadastre os eventos vistos na divulgação (redes sociais, rádio, cartazes) para programar a fiscalização. Evento anunciado sem solicitação aparece em vermelho.'),
       h('h3', { class: 'section-title' }, 'Agenda'),
-      ag.length ? ag.map((ev) => cardEvento(ev)) : h('p', { class: 'empty' }, 'Nenhum evento na agenda.'),
+      ag.length ? ag.map((ev) => cardEvento(ev)) : h('p', { class: 'empty' }, 'Nenhum evento na agenda. Toque em Novo evento quando souber de um.'),
       h('h3', { class: 'section-title' }, 'Locais recorrentes'),
+      S().locais.length ? null : h('p', { class: 'empty' }, 'Nenhum local cadastrado. Cadastre os locais que recebem eventos com frequência.'),
       S().locais.map((l) => h('button', { class: 'pick', type: 'button', onclick: () => editarLocal(l) },
         h('strong', {}, l.nome), h('span', { class: 'muted small' }, `Capacidade autorizada: ${l.capacidade ? l.capacidade.toLocaleString('pt-BR') : 'não informada'}${l.pendencias ? '. Tem pendência registrada' : ''}`))));
   }
@@ -441,7 +472,7 @@ export function iniciarAdmin(root, { sair }) {
         h('div', { class: 'row gap' },
           h('button', { class: 'btn btn-small', type: 'button', onclick: () => l && focar(l, 16) }, 'Ver local'),
           h('button', { class: 'btn btn-small', type: 'button', onclick: () => editarEvento(ev) }, 'Editar'),
-          h('button', { class: 'btn btn-small btn-primary', type: 'button', onclick: () => programarVistoriaEvento(ev) }, 'Programar vistoria'))));
+          h('button', { class: 'btn btn-small btn-primary', type: 'button', onclick: () => programarVistoriaEvento(ev) }, 'Programar fiscalização'))));
   }
 
   function programarVistoriaEvento(ev) {
@@ -450,15 +481,15 @@ export function iniciarAdmin(root, { sair }) {
     const selV = select(opcoesVist(true), '');
     const inData = h('input', { type: 'date', value: addDays(ev.inicio, -1) < today() ? today() : addDays(ev.inicio, -1) });
     sheet({
-      title: 'Programar vistoria do evento',
+      title: 'Programar fiscalização do evento',
       body: h('div', { class: 'stack' }, h('p', {}, h('strong', {}, ev.nome), h('br'), l.nome),
-        field('Vistoriador', selV), field('Data da vistoria', inData, 'Sugestão: véspera do evento, com a montagem concluída.')),
+        field('Vistoriador', selV), field('Data da fiscalização', inData, 'Sugestão: véspera do evento, com a montagem concluída, ou o próprio dia.')),
       actions: [{ label: 'Cancelar' }, {
         label: 'Programar', kind: 'primary', onClick: () => {
           let estabId = l.estab_id;
           if (!estabId || !st.estab(estabId)) { const e = st.novoEstabelecimento({ nome: l.nome, lat: l.lat, lng: l.lng, endereco: '' }); estabId = e.id; l.estab_id = e.id; st.salvarLocal(l); }
-          st.criarMissao({ estab_id: estabId, tipo: 'evento', evento_id: ev.id, vistoriador_id: selV.value, data: inData.value, prioridade: 'alta', processo: ev.processo, prazo: ev.inicio, notas: `Vistoria do evento "${ev.nome}". Público estimado: ${ev.publico || 'não informado'}. Capacidade autorizada do local: ${l.capacidade || 'não informada'}.${l.pendencias ? ` Pendência anterior: ${l.pendencias}` : ''}` });
-          toast('Vistoria do evento programada.', 'ok');
+          st.criarMissao({ estab_id: estabId, tipo: 'evento', evento_id: ev.id, vistoriador_id: selV.value, data: inData.value, prioridade: 'alta', processo: ev.processo, prazo: ev.inicio, notas: `Fiscalização do evento "${ev.nome}". Público estimado: ${ev.publico || 'não informado'}. Capacidade autorizada do local: ${l.capacidade || 'não informada'}.${l.pendencias ? ` Pendência anterior: ${l.pendencias}` : ''}` });
+          toast('Fiscalização do evento programada.', 'ok');
         },
       }],
     });
@@ -466,6 +497,7 @@ export function iniciarAdmin(root, { sair }) {
 
   function editarEvento(ev) {
     const novo = !ev;
+    if (!S().locais.length) { toast('Cadastre o local do evento primeiro (Novo local).', 'warn'); return; }
     const d = ev ? { ...ev } : { nome: '', local_id: S().locais[0]?.id || '', inicio: addDays(today(), 7), fim: '', publico: '', status: 'nao_recebido', processo: '', origem: '', notas: '' };
     const f = {
       nome: h('input', { value: d.nome, required: true }),
@@ -638,13 +670,13 @@ export function iniciarAdmin(root, { sair }) {
 
   // ---------- nova missão ----------
   function novaMissao(pre = {}) {
-    const d = { tipo: 'regularizacao', prioridade: 'media', ...pre };
+    const d = { tipo: 'fiscalizacao', prioridade: 'media', ...pre };
     let escolhido = pre.estab_id ? st.estab(pre.estab_id) : null;
     const pos = escolhido ? { lat: escolhido.lat, lng: escolhido.lng } : null;
     const f = {
-      tipo: select(Object.entries(TIPOS).filter(([k]) => k !== 'encaixe').map(([k, t]) => [k, t.nome]), d.tipo),
+      tipo: select(TIPOS_CADASTRO.map(([k, t]) => [k, t.nome]), d.tipo),
       prioridade: select(Object.entries(PRIORIDADES), d.prioridade),
-      processo: h('input', { placeholder: 'Ex.: SAC 2026.012345' }),
+      processo: h('input', { placeholder: 'Opcional' }),
       prazo: h('input', { type: 'date' }),
       busca: h('input', { type: 'search', placeholder: 'Nome ou CNPJ na base', autocomplete: 'off' }),
       nome: h('input', { value: escolhido?.nome || '' }),
@@ -697,7 +729,7 @@ export function iniciarAdmin(root, { sair }) {
       title: 'Nova missão', wide: true,
       body: h('div', { class: 'detail' },
         h('div', { class: 'detail-col form-grid one' },
-          field('Tipo', f.tipo), field('Prioridade', f.prioridade), field('Nº do processo (SAC)', f.processo), field('Prazo', f.prazo),
+          field('Tipo', f.tipo), field('Prioridade', f.prioridade), field('Nº do processo ou da denúncia', f.processo), field('Prazo', f.prazo),
           field('Procurar na base', f.busca), resultados,
           field('Nome do estabelecimento', f.nome), field('CNPJ', f.cnpj), field('Endereço', f.endereco), btnBuscar),
         h('div', { class: 'detail-col form-grid one' },
@@ -799,7 +831,7 @@ export function iniciarAdmin(root, { sair }) {
     for (const e of S().estabelecimentos) {
       if (e.ativo === false) continue;
       const c = cnaeInfo(e.cnae);
-      const cm = L.circleMarker([e.lat, e.lng], { radius: 4, weight: 1, color: '#fff', fillColor: c.cat?.cor || CINZA, fillOpacity: 0.85 });
+      const cm = L.circleMarker([e.lat, e.lng], { renderer: canvas, radius: 4, weight: 1, color: '#fff', fillColor: e.moci ? '#C8102E' : (c.cat?.cor || CINZA), fillOpacity: 0.85 });
       cm.bindPopup(() => popupEstab(e), { minWidth: 220 });
       G.base.addLayer(cm);
     }
@@ -894,9 +926,6 @@ export function iniciarAdmin(root, { sair }) {
       raio: h('input', { type: 'number', min: 30, max: 1000, value: c.raio_checkin }),
       cap: h('input', { type: 'number', min: 1, max: 30, value: c.capacidade_dia }),
       prazo: h('input', { type: 'number', min: 0, max: 180, value: c.prazo_retorno_dias }),
-      cs: h('input', { type: 'number', min: 0, max: 100, value: c.cotas.solicitada }),
-      cu: h('input', { type: 'number', min: 0, max: 100, value: c.cotas.urgencia }),
-      cp: h('input', { type: 'number', min: 0, max: 100, value: c.cotas.proativa }),
     };
     const equipe = h('div', { class: 'stack' }, S().vistoriadores.map((v) => linhaVistoriador(v)));
     const setores = h('div', { class: 'stack' }, S().setores.map((s) => h('div', { class: 'row gap' },
@@ -915,17 +944,16 @@ export function iniciarAdmin(root, { sair }) {
             field('Nome da unidade (aparece no relatório)', f.unidade),
             field('Raio do check-in (metros)', f.raio, 'Check-in fora desse raio exige justificativa.'),
             field('Missões por vistoriador por dia', f.cap),
-            field('Prazo do retorno após notificação (dias)', f.prazo, 'Use 0 para não criar retornos automáticos.'),
-            field('Cota: demanda solicitada (%)', f.cs), field('Cota: urgência administrativa (%)', f.cu), field('Cota: proativa (%)', f.cp)),
+            field('Prazo do retorno após notificação (dias)', f.prazo, 'Use 0 para não criar retornos automáticos.')),
           h('button', { class: 'btn btn-primary', type: 'button', onclick: () => {
-            st.salvarConfig({ unidade: f.unidade.value.trim() || c.unidade, raio_checkin: +f.raio.value || 150, capacidade_dia: +f.cap.value || 7, prazo_retorno_dias: +f.prazo.value || 0, cotas: { solicitada: +f.cs.value || 0, urgencia: +f.cu.value || 0, proativa: +f.cp.value || 0 } });
+            st.salvarConfig({ unidade: f.unidade.value.trim() || c.unidade, raio_checkin: +f.raio.value || 150, capacidade_dia: +f.cap.value || 7, prazo_retorno_dias: +f.prazo.value || 0 });
             toast('Regras salvas.', 'ok');
           } }, 'Salvar regras'),
           h('button', { class: 'btn', type: 'button', onclick: () => { sh.close(); abrirCriterios(); } }, 'Critérios das sugestões')),
         h('section', {}, h('h3', {}, 'Equipe'), equipe,
-          h('button', { class: 'btn', type: 'button', onclick: () => { st.salvarVistoriador({ nome: 'Novo vistoriador', cor: '#DB2777' }); sh.close(); abrirAjustes(); } }, 'Adicionar vistoriador')),
+          h('button', { class: 'btn', type: 'button', onclick: () => { st.salvarVistoriador({ nome: 'NOVO VISTORIADOR', cor: '#DB2777', whatsapp: '' }); sh.close(); abrirAjustes(); } }, 'Adicionar vistoriador')),
         h('section', {}, h('h3', {}, 'Setores'),
-          h('p', { class: 'hint' }, 'Os setores de exemplo são ilustrativos. Desenhe os reais (por bairros ou setores censitários) ou importe um GeoJSON exportado do QGIS.'),
+          h('p', { class: 'hint' }, 'Opcional. Sem setores, a distribuição é feita por proximidade. Desenhe setores (por bairros ou regiões) ou importe um GeoJSON do QGIS se quiser fixar áreas por equipe.'),
           setores,
           h('div', { class: 'row gap wrap' },
             h('button', { class: 'btn btn-primary', type: 'button', onclick: () => { sh.close(); iniciarDesenho(); } }, 'Desenhar setor no mapa'),
@@ -945,12 +973,13 @@ export function iniciarAdmin(root, { sair }) {
                 h('button', { class: 'btn btn-primary', type: 'button', onclick: () => { st.salvarConfig({ moci_cidades: inCid.value.trim(), moci_url: inUrl.value.trim() }); toast('Configuração do MOCI salva.', 'ok'); sincronizarMoci(); } }, 'Salvar e atualizar')));
           })()),
         h('section', {}, h('h3', {}, 'Dados'),
-          h('p', { class: 'hint' }, `Base de estabelecimentos: ${S().estabelecimentos.length} registros. Missões: ${S().missoes.length}.`),
+          (() => { const b = st.infoBasePublica(); return h('p', { class: 'hint' }, b ? `Base pública: ${b.total.toLocaleString('pt-BR')} estabelecimentos de Petrolina (Receita ${b.mes_receita || ''}, gerada em ${b.gerado_em ? new Date(b.gerado_em).toLocaleDateString('pt-BR') : 'data não informada'}). Atualiza sozinha todo mês.` : 'Base pública ainda não publicada pela rotina mensal.'); })(),
+          h('p', { class: 'hint' }, `Neste aparelho: ${S().missoes.length} missões, ${S().estabelecimentos.filter((e) => e.moci_id).length} edificações do MOCI. Faça backup de vez em quando: os dados ficam só aqui até ligar o banco.`),
           h('div', { class: 'row gap wrap' },
-            h('button', { class: 'btn', type: 'button', onclick: () => inBase.click() }, 'Importar base pública (GeoJSON da rotina mensal)'), inBase,
+            h('button', { class: 'btn', type: 'button', onclick: () => inBase.click() }, 'Importar base (GeoJSON)'), inBase,
             h('button', { class: 'btn', type: 'button', onclick: () => baixar(`fiscaliza-backup-${today()}.json`, st.exportarJSON()) }, 'Baixar backup'),
             h('button', { class: 'btn', type: 'button', onclick: () => inBackup.click() }, 'Restaurar backup'), inBackup,
-            S().modo === 'demo' ? h('button', { class: 'btn btn-danger', type: 'button', onclick: async () => { if (await confirmar('Apagar tudo e voltar aos dados de exemplo?', { ok: 'Restaurar exemplo', kind: 'danger' })) { st.resetDemo(); sh.close(); toast('Dados de exemplo restaurados.', 'ok'); } } }, 'Restaurar dados de exemplo') : null))),
+            h('button', { class: 'btn btn-danger', type: 'button', onclick: async () => { if (await confirmar('Apagar todas as missões, eventos e registros deste aparelho? Baixe um backup antes se precisar.', { ok: 'Apagar tudo', kind: 'danger' })) { st.apagarTudo(); sh.close(); toast('Dados apagados.', 'ok'); } } }, 'Apagar dados deste aparelho')))),
     });
   }
 
@@ -958,6 +987,7 @@ export function iniciarAdmin(root, { sair }) {
     return h('div', { class: 'row gap' },
       h('input', { type: 'color', value: v.cor, 'aria-label': `Cor de ${v.nome}`, onchange: (e) => st.salvarVistoriador({ id: v.id, cor: e.target.value }) }),
       h('input', { value: v.nome, 'aria-label': 'Nome', onchange: (e) => st.salvarVistoriador({ id: v.id, nome: e.target.value.trim() || v.nome }) }),
+      h('input', { value: v.whatsapp || '', 'aria-label': `WhatsApp de ${v.nome}`, placeholder: 'WhatsApp (DDD + número)', inputmode: 'tel', onchange: (e) => st.salvarVistoriador({ id: v.id, whatsapp: e.target.value.replace(/\D/g, '') }) }),
       h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: v.ativo !== false, onchange: (e) => st.salvarVistoriador({ id: v.id, ativo: e.target.checked }) }), 'Ativo'));
   }
 
@@ -986,10 +1016,9 @@ export function iniciarAdmin(root, { sair }) {
   function importarBase(txt) {
     try {
       const gj = JSON.parse(txt);
-      const lista = (gj.features || []).map((ft) => ({ ...ft.properties, lng: ft.geometry?.coordinates?.[0], lat: ft.geometry?.coordinates?.[1] }));
-      const r = st.importarEstabelecimentos(lista);
+      const n = st.definirBasePublica(gj);
       G.base.clearLayers();
-      toast(`Base importada: ${r.novos} novos, ${r.atual} atualizados.`, 'ok');
+      toast(`Base carregada: ${n} estabelecimentos.`, 'ok');
     } catch { toast('Arquivo inválido. Use o GeoJSON gerado pela rotina mensal.', 'warn'); }
   }
 
@@ -998,6 +1027,7 @@ export function iniciarAdmin(root, { sair }) {
   render();
   const ultimo = st.configMoci().sync?.ts || 0;
   if (Date.now() - ultimo > 30 * 60000) setTimeout(() => sincronizarMoci({ silencioso: true }), 600);
-  map.fitBounds(L.latLngBounds(S().setores.filter((s) => s.id !== 's7' || S().setores.length < 3).flatMap((s) => s.poligono)), { padding: [20, 20] });
+  if (S().setores.length) map.fitBounds(L.latLngBounds(S().setores.flatMap((s) => s.poligono)), { padding: [20, 20] });
+  else map.setView([PETROLINA.lat, PETROLINA.lng], 13);
   return { map };
 }
