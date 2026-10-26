@@ -1,0 +1,49 @@
+name: Atualizar base pública (CNPJ + IBGE)
+
+# Todo dia 20, às 06:47 de Petrolina (09:47 UTC). Também pode ser rodada à mão na aba Actions.
+on:
+  schedule:
+    - cron: '47 9 20 * *'
+  workflow_dispatch:
+    inputs:
+      mes:
+        description: 'Mês da Receita (AAAA-MM). Deixe vazio para o mais recente.'
+        required: false
+        default: ''
+      cnefe_url:
+        description: 'URL do arquivo do CNEFE de Petrolina, se a busca automática falhar.'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atualizar-base
+  cancel-in-progress: false
+
+jobs:
+  atualizar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Baixar, filtrar e localizar estabelecimentos
+        env:
+          MES: ${{ inputs.mes }}
+          CNEFE_URL: ${{ inputs.cnefe_url }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python pipeline/atualizar_base.py --saida estabelecimentos.geojson
+
+      - name: Guardar o arquivo para importar no painel
+        uses: actions/upload-artifact@v4
+        with:
+          name: estabelecimentos-petrolina
+          path: estabelecimentos.geojson
+          retention-days: 35

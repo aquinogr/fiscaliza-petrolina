@@ -1,0 +1,51 @@
+{
+  "_sobre": "Categorias indicativas para priorizar sugestões. Não equivalem à classificação de ocupação das normas de segurança contra incêndio do CBMPE. Edite livremente: o site e a rotina automática leem este mesmo arquivo.",
+  "categorias": {
+    "inflamaveis": { "nome": "Inflamáveis e explosivos", "peso": 1.0, "cor": "#B91C1C" },
+    "publico": { "nome": "Reunião de público", "peso": 1.0, "cor": "#9333EA" },
+    "agro": { "nome": "Agroindústria e armazenagem", "peso": 0.95, "cor": "#15803D" },
+    "vulneraveis": { "nome": "Saúde, educação e hospedagem", "peso": 0.85, "cor": "#0369A1" },
+    "comercio": { "nome": "Comércio e serviços", "peso": 0.5, "cor": "#64748B" }
+  },
+  "cnaes": {
+    "4731800": { "desc": "Posto de combustíveis", "categoria": "inflamaveis" },
+    "4784900": { "desc": "Revenda de GLP", "categoria": "inflamaveis" },
+    "4682600": { "desc": "Atacado de GLP", "categoria": "inflamaveis" },
+    "4681801": { "desc": "Atacado de combustíveis", "categoria": "inflamaveis" },
+    "4789006": { "desc": "Fogos de artifício", "categoria": "inflamaveis" },
+
+    "5611205": { "desc": "Bar com entretenimento", "categoria": "publico" },
+    "9329801": { "desc": "Casa noturna / salão de dança", "categoria": "publico" },
+    "8230002": { "desc": "Casa de festas e eventos", "categoria": "publico" },
+    "8230001": { "desc": "Organização de feiras e eventos", "categoria": "publico" },
+    "9491000": { "desc": "Templo religioso", "categoria": "publico" },
+    "5914600": { "desc": "Cinema", "categoria": "publico" },
+    "9312300": { "desc": "Clube social ou esportivo", "categoria": "publico" },
+
+    "0163600": { "desc": "Packing house (pós-colheita)", "categoria": "agro" },
+    "5211701": { "desc": "Armazém geral", "categoria": "agro" },
+    "5211799": { "desc": "Depósito / câmara fria", "categoria": "agro" },
+    "1031700": { "desc": "Conservas de frutas", "categoria": "agro" },
+    "1033302": { "desc": "Fábrica de sucos", "categoria": "agro" },
+    "1112700": { "desc": "Vinícola", "categoria": "agro" },
+
+    "8610101": { "desc": "Hospital", "categoria": "vulneraveis" },
+    "8610102": { "desc": "Pronto-socorro", "categoria": "vulneraveis" },
+    "8711502": { "desc": "Instituição de longa permanência para idosos", "categoria": "vulneraveis" },
+    "8511200": { "desc": "Creche", "categoria": "vulneraveis" },
+    "8512100": { "desc": "Pré-escola", "categoria": "vulneraveis" },
+    "8513900": { "desc": "Ensino fundamental", "categoria": "vulneraveis" },
+    "8520100": { "desc": "Ensino médio", "categoria": "vulneraveis" },
+    "8531700": { "desc": "Ensino superior", "categoria": "vulneraveis" },
+    "5510801": { "desc": "Hotel", "categoria": "vulneraveis" },
+    "5510803": { "desc": "Motel", "categoria": "vulneraveis" },
+
+    "5611201": { "desc": "Restaurante", "categoria": "comercio" },
+    "5611204": { "desc": "Bar sem entretenimento", "categoria": "comercio" },
+    "4711301": { "desc": "Hipermercado", "categoria": "comercio" },
+    "4711302": { "desc": "Supermercado", "categoria": "comercio" },
+    "9313100": { "desc": "Academia", "categoria": "comercio" },
+    "4744099": { "desc": "Materiais de construção", "categoria": "comercio" },
+    "4520001": { "desc": "Oficina mecânica", "categoria": "comercio" }
+  }
+}
