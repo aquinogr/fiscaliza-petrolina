@@ -1,6 +1,6 @@
 .downloads/
 *.geojson
-!exemplos/*.geojson
+!data/estabelecimentos.geojson
 __pycache__/
 .DS_Store
 fiscaliza-backup-*.json

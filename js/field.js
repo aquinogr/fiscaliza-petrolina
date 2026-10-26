@@ -8,6 +8,7 @@ import { criarMapa, iconeMissao, iconeBase, iconeEu } from './map.js';
 import { dist, linkMaps, linkWaze, extensaoRota } from './geo.js';
 import { salvarFoto, fotoURL } from './fotos.js';
 import { marca } from './marca.js';
+import { linhasMoci } from './moci.js';
 
 const MOTIVOS_NAO_REALIZADA = ['Sem tempo hoje', 'Viatura indisponível', 'Endereço inacessível', 'Remanejado pelo oficial', 'Outro'];
 const RAIO_PERTO = 700;
@@ -247,7 +248,8 @@ export function iniciarCampo(root, { vid, sair }) {
       h('div', { class: 'mmeta' }, h('span', { class: `status s-${m.status}` }, STATUS[m.status]), TIPOS[m.tipo]?.nome, m.prioridade === 'alta' ? h('span', { class: 'tag tag-alta' }, 'Alta') : null),
       h('div', { class: 'kv' }, h('span', {}, 'Endereço'), h('strong', {}, e?.endereco || '')),
       e?.cnpj ? h('div', { class: 'kv' }, h('span', {}, 'CNPJ'), h('strong', {}, formatarCNPJ(e.cnpj))) : null,
-      h('div', { class: 'kv' }, h('span', {}, 'Atividade'), h('strong', {}, cnaeInfo(e?.cnae).desc)),
+      h('div', { class: 'kv' }, h('span', {}, 'Atividade'), h('strong', {}, e?.moci && !e.cnae ? 'Edificação cadastrada no MOCI' : cnaeInfo(e?.cnae).desc)),
+      linhasMoci(e).map(([k, v]) => h('div', { class: 'kv' }, h('span', {}, k), h('strong', {}, v))),
       m.processo ? h('div', { class: 'kv' }, h('span', {}, 'Processo'), h('strong', {}, m.processo)) : null,
       m.prazo ? h('div', { class: 'kv' }, h('span', {}, 'Prazo'), h('strong', { class: diffDays(m.prazo, today()) < 0 ? 'txt-danger' : '' }, `${fmtDate(m.prazo)} (${relDays(m.prazo)})`)) : null,
       m.notas ? h('p', { class: 'note' }, m.notas) : null,

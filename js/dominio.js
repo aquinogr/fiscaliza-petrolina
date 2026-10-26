@@ -4,6 +4,7 @@ export const TIPOS = {
   regularizacao: { nome: 'Regularização', fila: 'solicitada' },
   evento: { nome: 'Evento temporário', fila: 'solicitada' },
   retorno: { nome: 'Retorno de notificação', fila: 'urgencia' },
+  avcb_vencido: { nome: 'AVCB vencido', fila: 'urgencia' },
   denuncia: { nome: 'Denúncia', fila: 'urgencia' },
   fiscalizacao: { nome: 'Fiscalização', fila: 'proativa' },
   encaixe: { nome: 'Encaixe', fila: 'proativa' },

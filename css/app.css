@@ -225,6 +225,7 @@ body[data-papel="vistoriador"] .toasts { bottom: calc(5.2rem + env(safe-area-ins
 
 .block { border: 1px solid var(--line); border-radius: var(--r-md); padding: 0.85rem; display: flex; flex-direction: column; gap: 0.6rem; background: var(--surface); }
 .block-alert { border-color: var(--amber); background: var(--warn-bg); }
+.block-moci { border-left: 5px solid var(--vermelho); }
 .block-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; }
 .section-title { margin-top: 0.4rem; font-size: 1.15rem; }
 

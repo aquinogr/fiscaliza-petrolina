@@ -5,6 +5,7 @@ import { gerarDemo } from './seed.js';
 import { today, addDays, fmtDate } from './ui.js';
 import { ordenarRota, setorDe, dist } from './geo.js';
 import { aplicarResultado, RESULTADOS_COM_EXIGENCIA } from './dominio.js';
+import { converterPonto, cidadeAceita, nomesParecidos, MOCI_URL_PADRAO } from './moci.js';
 
 const KEY = 'fiscaliza-petrolina:v1';
 let state = null;
@@ -139,10 +140,12 @@ export function definirEscala(data, setorId, vid) {
 }
 
 const PESO_PRIORIDADE = { alta: 0, media: 1, baixa: 2 };
+// Dentro da mesma prioridade: o prazo mais próximo primeiro; para AVCB vencido, quem venceu há mais tempo.
+const chaveData = (m) => String(m.prazo || m.ref_data || '9999');
 function ordenarFila(lista) {
   return lista.slice().sort((a, b) =>
     (PESO_PRIORIDADE[a.prioridade] - PESO_PRIORIDADE[b.prioridade]) ||
-    String(a.prazo || '9999').localeCompare(String(b.prazo || '9999')) ||
+    chaveData(a).localeCompare(chaveData(b)) ||
     String(a.criado_em).localeCompare(String(b.criado_em)));
 }
 export function filaOrdenada() { return ordenarFila(fila()); }
@@ -304,4 +307,88 @@ export function importarEstabelecimentos(lista) {
   }
   registrar('importar_base', `${novos}/${atual}`); salvar();
   return { novos, atual };
+}
+
+// ---------- MOCI ----------
+export function configMoci() {
+  const c = state.config;
+  return { url: c.moci_url || MOCI_URL_PADRAO, cidades: c.moci_cidades ?? 'Petrolina', sync: c.moci_sync || null };
+}
+
+// Recebe os pontos crus do MOCI e atualiza a base. Só lê o MOCI; nada volta para lá.
+export function importarMoci(pontos) {
+  const hoje = today();
+  const { cidades } = configMoci();
+  const stats = { recebidos: pontos.length, importados: 0, novos: 0, ligados: 0, vencidos: 0, sem_avcb: 0, outras_cidades: 0, vencidos_outras: 0 };
+  const vistos = new Set();
+  const porMoci = new Map(state.estabelecimentos.filter((e) => e.moci_id).map((e) => [e.moci_id, e]));
+  for (const bruto of pontos) {
+    const p = converterPonto(bruto, hoje);
+    if (!p) continue;
+    if (!cidadeAceita(p.cidade, cidades)) {
+      stats.outras_cidades++;
+      if (p.situacao === 'vencido') stats.vencidos_outras++;
+      continue;
+    }
+    vistos.add(p.moci_id);
+    let e = porMoci.get(p.moci_id);
+    if (!e) {
+      // Liga ao CNPJ já existente se estiver a até 60 m e com nome parecido
+      e = state.estabelecimentos.find((x) => !x.moci_id && dist(x, p) <= 60 && nomesParecidos(x.nome, p.nome));
+      if (e) stats.ligados++;
+    }
+    const anterior = e?.moci?.situacao;
+    if (!e) {
+      e = { id: uid('e'), cnpj: '', nome: p.nome, cnae: '', endereco: p.endereco, bairro: p.bairro, lat: p.lat, lng: p.lng, abertura: null, origem: 'moci', situacao_doc: 'desconhecida', validade_doc: null, ultima_fiscalizacao: null, notificacoes: 0, ultimo_resultado: null };
+      state.estabelecimentos.push(e);
+      stats.novos++;
+    }
+    e.moci_id = p.moci_id;
+    e.moci = { ...p.dados, situacao: p.situacao, validade: p.validade, cidade: p.cidade, removido: false };
+    if (e.origem === 'moci') {
+      Object.assign(e, { nome: p.nome, endereco: p.endereco || e.endereco, bairro: p.bairro || e.bairro, ativo: true });
+      if (!e.geo_corrigido) { e.lat = p.lat; e.lng = p.lng; }
+    }
+    // A situação do MOCI só sobrescreve quando muda lá (preserva o que a equipe registrou em campo depois)
+    if (p.situacao !== anterior) {
+      e.situacao_doc = p.situacao === 'vencido' ? 'vencido' : p.situacao;
+      e.validade_doc = p.situacao === 'valido' ? p.validade : null;
+    }
+    if (p.situacao === 'vencido') stats.vencidos++;
+    if (p.situacao === 'sem_documento') stats.sem_avcb++;
+    stats.importados++;
+  }
+  // Pontos apagados no MOCI
+  for (const e of state.estabelecimentos) {
+    if (e.moci_id && e.moci && !vistos.has(e.moci_id) && cidadeAceita(e.moci.cidade, cidades)) {
+      e.moci.removido = true;
+      if (e.origem === 'moci') e.ativo = false;
+    }
+  }
+  state.config.moci_sync = { ts: Date.now(), ...stats };
+  registrar('importar_moci', `${stats.importados}`); salvar();
+  return stats;
+}
+
+export function vencidosMoci({ incluirSemAvcb = false } = {}) {
+  const abertas = new Set(state.missoes.filter((m) => ['pendente', 'no_local'].includes(m.status)).map((m) => m.estab_id));
+  return state.estabelecimentos.filter((e) => e.moci && !e.moci.removido && e.ativo !== false && !abertas.has(e.id) &&
+    (e.situacao_doc === 'vencido' || (incluirSemAvcb && e.situacao_doc === 'sem_documento')))
+    .sort((a, b) => String(a.moci.validade || '0000').localeCompare(String(b.moci.validade || '0000')));
+}
+
+// Coloca na fila uma missão para cada AVCB vencido (e, se pedido, sem AVCB) que ainda não tem missão aberta.
+export function filaDeVencidos({ incluirSemAvcb = false } = {}) {
+  const lista = vencidosMoci({ incluirSemAvcb });
+  for (const e of lista) {
+    const venc = e.situacao_doc === 'vencido';
+    state.missoes.push({
+      id: uid('m'), estab_id: e.id, tipo: 'avcb_vencido', prioridade: venc ? 'alta' : 'media', status: 'pendente',
+      data: null, vistoriador_id: null, ordem: 0, processo: null, prazo: null, ref_data: e.moci?.validade || null,
+      notas: venc ? `AVCB vencido desde ${fmtDate(e.moci?.validade)}, segundo o MOCI. Conferir a situação e notificar se continuar irregular.` : 'Edificação sem AVCB no MOCI. Conferir a situação.',
+      origem: 'moci', criado_em: today(), checkin: null, checkout: null,
+    });
+  }
+  if (lista.length) { registrar('fila_vencidos', String(lista.length)); salvar(); }
+  return lista.length;
 }

@@ -22,15 +22,25 @@ export function pontuar(e, ctx) {
 
   // 1. Ocupação e consequências potenciais
   const info = cnaeInfo(e.cnae);
-  const fOc = info.cat ? info.cat.peso : 0.3;
-  partes.push({ criterio: 'Ocupação', pontos: pesos.ocupacao * fOc, max: pesos.ocupacao, motivo: info.cat ? info.cat.nome : 'Atividade fora da tabela' });
+  let fOc = info.cat ? info.cat.peso : 0.3;
+  let mOc = info.cat ? info.cat.nome : 'Atividade fora da tabela';
+  if (!info.cat && e.moci) {
+    // Sem CNAE: usa o porte da edificação cadastrado no MOCI
+    const d = e.moci;
+    const grande = (d.area || 0) >= 750, alta = (d.altura || 0) >= 12 || (d.pavimentos || 0) >= 4;
+    fOc = Math.min(1, 0.5 + (grande ? 0.25 : 0) + (alta ? 0.25 : 0) + (d.caldeira ? 0.15 : 0));
+    mOc = [grande ? `Edificação de ${Math.round(d.area).toLocaleString('pt-BR')} m²` : 'Edificação cadastrada no MOCI', alta ? 'de maior altura' : null, d.caldeira ? 'com caldeira' : null].filter(Boolean).join(', ');
+    info.desc = 'Edificação cadastrada no MOCI';
+  }
+  partes.push({ criterio: 'Ocupação', pontos: pesos.ocupacao * fOc, max: pesos.ocupacao, motivo: mOc });
 
   // 2. Situação documental conhecida
   let fDoc = 0, mDoc = '';
   const sit = e.situacao_doc || 'desconhecida';
-  if (sit === 'desconhecida') { fDoc = 1; mDoc = 'Sem registro conhecido no CBMPE'; }
-  else if (sit === 'sem_documento') { fDoc = 1; mDoc = 'Sem documento em campo'; }
-  else if (sit === 'vencido') { fDoc = 0.85; mDoc = 'Documento vencido'; }
+  const vencMoci = e.moci?.situacao === 'vencido' && e.moci.validade;
+  if (sit === 'vencido') { fDoc = 1; mDoc = vencMoci ? `AVCB vencido há ${diffDays(hoje, e.moci.validade)} dias (MOCI)` : 'Documento vencido'; }
+  else if (sit === 'sem_documento') { fDoc = 0.95; mDoc = e.moci ? 'Sem AVCB no MOCI' : 'Sem documento em campo'; }
+  else if (sit === 'desconhecida') { fDoc = 0.9; mDoc = 'Sem registro conhecido no CBMPE'; }
   else if (sit === 'valido' && e.validade_doc && diffDays(e.validade_doc, hoje) < 0) { fDoc = 0.85; mDoc = 'Validade expirou'; }
   else if (sit === 'valido' && e.validade_doc && diffDays(e.validade_doc, hoje) <= 60) { fDoc = 0.4; mDoc = 'Documento vence em até 60 dias'; }
   else if (sit === 'em_andamento') { fDoc = 0.3; mDoc = 'Processo em andamento'; }
@@ -59,6 +69,8 @@ export function pontuar(e, ctx) {
 
   if (e.abertura && diffDays(hoje, e.abertura) <= 60) tags.push('CNPJ novo');
   if (info.categoria === 'agro') tags.push('Agroindústria');
+  if (e.moci) tags.push('MOCI');
+  if (sit === 'vencido') tags.push('AVCB vencido');
 
   const total = partes.reduce((a, p) => a + p.pontos, 0);
   const max = partes.reduce((a, p) => a + p.max, 0) || 100;

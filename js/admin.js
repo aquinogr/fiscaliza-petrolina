@@ -8,6 +8,7 @@ import { criarMapa, iconeMissao, iconeFila, iconeSugestao, iconeLocal, iconeBase
 import { geocodificar, centroide, dist, extensaoRota } from './geo.js';
 import { fotoURL } from './fotos.js';
 import { marca } from './marca.js';
+import { buscarMoci, linhasMoci, MOCI_SITE } from './moci.js';
 
 const CINZA = '#94A3B8';
 
@@ -15,7 +16,7 @@ export function iniciarAdmin(root, { sair }) {
   const ui = {
     data: today(), aba: 'hoje', filtroTipo: '',
     camadas: { setores: true, missoes: true, fila: true, sugestoes: false, locais: true, base: false },
-    desenho: null, escolhendoBase: false, limiteSug: 30,
+    desenho: null, escolhendoBase: false, limiteSug: 30, soVencidos: false, incluirSemAvcb: false, mociCarregando: false,
   };
 
   // ---------- estrutura ----------
@@ -158,7 +159,8 @@ export function iniciarAdmin(root, { sair }) {
           onclick: () => { const n = st.distribuirAutomatico(ui.data); toast(n ? `${n} missão(ões) da fila distribuídas pelos setores.` : 'Nenhuma missão da fila cabe nos setores escalados.', n ? 'ok' : 'info'); },
         }, 'Distribuir fila pelos setores'),
         h('button', { class: 'btn', type: 'button', onclick: () => novaMissao() }, 'Nova missão')),
-      h('p', { class: 'hint' }, `Cada equipe recebe até ${S().config.capacidade_dia} missões por dia, por ordem de prioridade e prazo, só dentro do setor em que foi escalada.`));
+      h('p', { class: 'hint' }, `Cada equipe recebe até ${S().config.capacidade_dia} missões por dia, por ordem de prioridade e prazo, só dentro do setor em que foi escalada.`),
+      st.vencidosMoci().length ? h('p', { class: 'note note-warn' }, `${st.vencidosMoci().length} AVCB(s) vencido(s) no MOCI ainda fora da fila. `, h('button', { class: 'link', type: 'button', onclick: () => { ui.aba = 'sugestoes'; renderPainel(); } }, 'Ver no MOCI')) : null);
 
     // composição do dia x cotas
     const cont = { solicitada: 0, urgencia: 0, proativa: 0 };
@@ -295,15 +297,56 @@ export function iniciarAdmin(root, { sair }) {
   // ---------- aba: sugestões ----------
   function telaSugestoes() {
     const ev = semanaComEventoGrande(S());
-    const lista = sugCache.slice(0, ui.limiteSug);
+    const filtradas = ui.soVencidos ? sugCache.filter((x) => x.estab.situacao_doc === 'vencido') : sugCache;
+    const lista = filtradas.slice(0, ui.limiteSug);
     return h('div', { class: 'stack' },
+      blocoMoci(),
       h('p', { class: 'hint' }, 'Geradas a partir da base pública (CNPJ e endereços do IBGE) e do que as equipes registram em campo. Nada vira missão sem a sua decisão; cada rejeição ensina o motor a não repetir.'),
       h('div', { class: 'row gap wrap' },
         h('button', { class: 'btn', type: 'button', onclick: () => abrirCriterios() }, 'Critérios'),
-        h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: ui.camadas.sugestoes, onchange: (e) => { ui.camadas.sugestoes = e.target.checked; aplicarCamadas(); syncCheck(); renderMapa(); } }), 'Mostrar no mapa')),
+        h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: ui.camadas.sugestoes, onchange: (e) => { ui.camadas.sugestoes = e.target.checked; aplicarCamadas(); syncCheck(); renderMapa(); } }), 'Mostrar no mapa'),
+        h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: ui.soVencidos, onchange: (e) => { ui.soVencidos = e.target.checked; renderPainel(); } }), 'Só AVCB vencido')),
       ev ? h('p', { class: 'note note-warn' }, `${ev.nome} acontece ${relDays(ev.inicio)}. Na semana de evento grande, a sugestão é segurar a fiscalização proativa.`) : null,
-      lista.length ? lista.map((s) => cardSugestao(s)) : h('p', { class: 'empty' }, `Nenhuma sugestão acima de ${S().config.limite_sugestao} pontos. Você pode baixar o limite em Critérios.`),
-      sugCache.length > lista.length ? h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => { ui.limiteSug += 30; renderPainel(); } }, `Mostrar mais (${sugCache.length - lista.length})`) : null);
+      lista.length ? lista.map((s) => cardSugestao(s)) : h('p', { class: 'empty' }, ui.soVencidos ? 'Nenhum AVCB vencido entre as sugestões. Os que já estão na fila ou com missão não aparecem aqui.' : `Nenhuma sugestão acima de ${S().config.limite_sugestao} pontos. Você pode baixar o limite em Critérios.`),
+      filtradas.length > lista.length ? h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => { ui.limiteSug += 30; renderPainel(); } }, `Mostrar mais (${filtradas.length - lista.length})`) : null);
+  }
+
+  // ---------- MOCI ----------
+  async function sincronizarMoci({ silencioso = false } = {}) {
+    if (ui.mociCarregando) return;
+    if (!navigator.onLine) { if (!silencioso) toast('Sem conexão para buscar o MOCI agora.', 'warn'); return; }
+    ui.mociCarregando = true; if (ui.aba === 'sugestoes') renderPainel();
+    try {
+      const pontos = await buscarMoci(st.configMoci().url);
+      const r = st.importarMoci(pontos);
+      if (!silencioso || r.novos) toast(`MOCI atualizado: ${r.importados} edificação(ões), ${r.vencidos} com AVCB vencido.`, 'ok');
+    } catch (err) {
+      if (!silencioso) toast(`Não foi possível ler o MOCI: ${err.message}`, 'warn');
+    } finally {
+      ui.mociCarregando = false; renderPainel();
+    }
+  }
+
+  function blocoMoci() {
+    const c = st.configMoci();
+    const sy = c.sync;
+    const venc = st.vencidosMoci({ incluirSemAvcb: false }).length;
+    const semAvcb = st.vencidosMoci({ incluirSemAvcb: true }).length - venc;
+    const naFila = st.fila().filter((m) => m.tipo === 'avcb_vencido').length;
+    return h('section', { class: 'block block-moci' },
+      h('div', { class: 'block-head' }, h('h3', {}, 'MOCI'), h('a', { href: MOCI_SITE, target: '_blank', rel: 'noopener', class: 'small' }, 'Abrir o MOCI')),
+      ui.mociCarregando ? h('p', { class: 'muted' }, 'Lendo o cadastro do MOCI…') :
+        sy ? h('p', {}, `Atualizado às ${fmtTime(sy.ts)}${new Date(sy.ts).toLocaleDateString('pt-BR') !== new Date().toLocaleDateString('pt-BR') ? ` de ${new Date(sy.ts).toLocaleDateString('pt-BR')}` : ''}: ${sy.importados} edificação(ões) de ${c.cidades || 'todas as cidades'}, ${sy.vencidos} com AVCB vencido e ${sy.sem_avcb} sem AVCB.`) :
+          h('p', { class: 'muted' }, 'Ainda não lido. Toque em "Atualizar do MOCI".'),
+      sy && sy.vencidos_outras ? h('p', { class: 'hint' }, `Há ${sy.vencidos_outras} AVCB(s) vencido(s) em outras cidades do CAT Sertão, fora do filtro (Ajustes > Dados).`) : null,
+      naFila ? h('p', { class: 'hint' }, `${naFila} missão(ões) de AVCB vencido já estão na fila.`) : null,
+      h('div', { class: 'row gap wrap' },
+        h('button', { class: 'btn btn-small', type: 'button', disabled: ui.mociCarregando, onclick: () => sincronizarMoci() }, 'Atualizar do MOCI'),
+        h('button', {
+          class: 'btn btn-small btn-primary', type: 'button', disabled: !(venc || (ui.incluirSemAvcb && semAvcb)),
+          onclick: () => { const n = st.filaDeVencidos({ incluirSemAvcb: ui.incluirSemAvcb }); toast(n ? `${n} missão(ões) na fila, com prioridade alta para os vencidos. Use "Distribuir fila pelos setores" na Escala.` : 'Nada novo para pôr na fila.', n ? 'ok' : 'info'); },
+        }, `Pôr na fila (${venc + (ui.incluirSemAvcb ? semAvcb : 0)})`),
+        h('label', { class: 'check small' }, h('input', { type: 'checkbox', checked: ui.incluirSemAvcb, onchange: (e) => { ui.incluirSemAvcb = e.target.checked; renderPainel(); } }), `Incluir sem AVCB (${semAvcb})`)));
   }
   function syncCheck() { ferramentas.querySelectorAll('input[type=checkbox]').forEach((c, i) => { c.checked = ui.camadas[CAMADAS[i][0]]; }); }
 
@@ -571,10 +614,12 @@ export function iniciarAdmin(root, { sair }) {
           h('div', { class: 'mmeta' }, h('span', { class: `status s-${m.status}` }, statusTexto(m)), TIPOS[m.tipo]?.nome, m.origem === 'sugestao' ? h('span', { class: 'tag' }, 'Veio de sugestão') : null),
           h('div', { class: 'kv' }, h('span', {}, 'Endereço'), h('strong', {}, [e?.endereco, setorNome(e)].filter(Boolean).join(', '))),
           e?.cnpj ? h('div', { class: 'kv' }, h('span', {}, 'CNPJ'), h('strong', {}, formatarCNPJ(e.cnpj))) : null,
-          h('div', { class: 'kv' }, h('span', {}, 'Atividade'), h('strong', {}, cnaeInfo(e?.cnae).desc)),
+          h('div', { class: 'kv' }, h('span', {}, 'Atividade'), h('strong', {}, e?.moci && !e.cnae ? 'Edificação cadastrada no MOCI' : cnaeInfo(e?.cnae).desc)),
           h('div', { class: 'kv' }, h('span', {}, 'Situação no cadastro'), h('strong', {}, `${SITUACAO_NOME[e?.situacao_doc] || 'Não verificado'}${e?.validade_doc ? ` até ${fmtDate(e.validade_doc)}` : ''}`)),
           h('div', { class: 'kv' }, h('span', {}, 'Última fiscalização'), h('strong', {}, e?.ultima_fiscalizacao ? `${fmtDate(e.ultima_fiscalizacao)}${e.ultimo_resultado ? `, ${RESULTADO_NOME[e.ultimo_resultado].toLowerCase()}` : ''}` : 'Nunca')),
           sc ? h('div', { class: 'kv' }, h('span', {}, 'Escore atual'), h('strong', {}, `${sc.score} de 100`)) : null,
+          linhasMoci(e).map(([k, v]) => h('div', { class: 'kv' }, h('span', {}, k), h('strong', {}, v))),
+          e?.moci_id ? h('a', { href: `${MOCI_SITE}?editar=${encodeURIComponent(e.moci_id)}`, target: '_blank', rel: 'noopener', class: 'small' }, 'Abrir esta edificação no MOCI') : null,
           exec.length ? h('h4', {}, 'Execução') : null, exec, fotos,
           hist.length ? h('h4', {}, 'Visitas anteriores') : null,
           hist.length ? h('ul', { class: 'plain' }, hist.map((x) => h('li', {}, `${fmtDate(x.data)}: ${RESULTADO_NOME[x.checkout.resultado] || STATUS[x.status]} (${nomeV(x.vistoriador_id)})`))) : null),
@@ -804,6 +849,7 @@ export function iniciarAdmin(root, { sair }) {
       h('strong', {}, e.nome), h('div', { class: 'muted small' }, `${sc.info.desc}. ${SITUACAO_NOME[e.situacao_doc] || ''}`),
       h('div', { class: 'small' }, e.ultima_fiscalizacao ? `Última fiscalização: ${fmtDate(e.ultima_fiscalizacao)}` : 'Nunca fiscalizado'),
       h('div', { class: 'small' }, `Escore ${sc.score}`),
+      e.moci ? h('div', { class: 'small' }, linhasMoci(e).slice(0, 2).map(([k, v]) => `${k}: ${v}`).join('. ')) : null,
       h('button', { class: 'btn btn-small btn-primary', type: 'button', onclick: () => { map.closePopup(); novaMissao({ estab_id: e.id, tipo: 'fiscalizacao' }); } }, 'Criar missão'));
   }
 
@@ -887,6 +933,17 @@ export function iniciarAdmin(root, { sair }) {
         h('section', {}, h('h3', {}, 'Base de partida das rotas'),
           h('p', { class: 'hint' }, 'Ponto de onde as equipes saem. Usado para ordenar os roteiros.'),
           h('button', { class: 'btn', type: 'button', onclick: () => { sh.close(); ui.escolhendoBase = true; map.closePopup(); mapaEl.classList.add('drawing'); mount(faixaMapa, h('span', {}, 'Toque no mapa para posicionar a base.'), h('button', { class: 'btn btn-small', type: 'button', onclick: () => { ui.escolhendoBase = false; faixaMapa.hidden = true; mapaEl.classList.remove('drawing'); } }, 'Cancelar')); faixaMapa.hidden = false; } }, 'Posicionar base no mapa')),
+        h('section', {}, h('h3', {}, 'MOCI'),
+          h('p', { class: 'hint' }, 'Lê as edificações cadastradas no MOCI (só leitura; nada é gravado lá). Atualiza sozinho ao abrir o painel, no máximo a cada 30 minutos.'),
+          (() => {
+            const c = st.configMoci();
+            const inCid = h('input', { value: c.cidades, placeholder: 'Petrolina' });
+            const inUrl = h('input', { value: c.url });
+            return h('div', { class: 'stack' },
+              h('div', { class: 'form-grid' }, field('Cidades (separe por vírgula; * para todas)', inCid), field('Endereço da consulta do MOCI', inUrl)),
+              h('div', { class: 'row gap wrap' },
+                h('button', { class: 'btn btn-primary', type: 'button', onclick: () => { st.salvarConfig({ moci_cidades: inCid.value.trim(), moci_url: inUrl.value.trim() }); toast('Configuração do MOCI salva.', 'ok'); sincronizarMoci(); } }, 'Salvar e atualizar')));
+          })()),
         h('section', {}, h('h3', {}, 'Dados'),
           h('p', { class: 'hint' }, `Base de estabelecimentos: ${S().estabelecimentos.length} registros. Missões: ${S().missoes.length}.`),
           h('div', { class: 'row gap wrap' },
@@ -939,6 +996,8 @@ export function iniciarAdmin(root, { sair }) {
   // ---------- início ----------
   st.on(() => { G.base.clearLayers(); render(); });
   render();
+  const ultimo = st.configMoci().sync?.ts || 0;
+  if (Date.now() - ultimo > 30 * 60000) setTimeout(() => sincronizarMoci({ silencioso: true }), 600);
   map.fitBounds(L.latLngBounds(S().setores.filter((s) => s.id !== 's7' || S().setores.length < 3).flatMap((s) => s.poligono)), { padding: [20, 20] });
   return { map };
 }

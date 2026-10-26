@@ -16,7 +16,7 @@ on:
         default: ''
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: atualizar-base
@@ -40,6 +40,18 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: python pipeline/atualizar_base.py --saida estabelecimentos.geojson
+
+      - name: Publicar a base no site
+        run: |
+          mkdir -p data
+          cp estabelecimentos.geojson data/estabelecimentos.geojson
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/estabelecimentos.geojson
+          if git diff --cached --quiet; then echo "Base sem mudanças"; exit 0; fi
+          git commit -m "Base pública atualizada (Receita Federal + IBGE)"
+          git pull --rebase origin main
+          git push origin HEAD:main
 
       - name: Guardar o arquivo para importar no painel
         uses: actions/upload-artifact@v4

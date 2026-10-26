@@ -1,9 +1,9 @@
 // Service worker: abre o app sem sinal e guarda os mapas já vistos.
-const VERSAO = 'fp-v1';
+const VERSAO = 'fp-v2';
 const SHELL = [
   './', './index.html', './manifest.webmanifest', './css/app.css', './data/cnae.json',
   './js/main.js', './js/store.js', './js/seed.js', './js/ui.js', './js/geo.js', './js/score.js', './js/map.js',
-  './js/admin.js', './js/field.js', './js/fotos.js', './js/dominio.js', './js/marca.js',
+  './js/admin.js', './js/field.js', './js/fotos.js', './js/dominio.js', './js/marca.js', './js/moci.js',
   './icons/icon-192.png', './icons/icon-512.png',
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css',
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js',
@@ -44,8 +44,8 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // Busca de endereço: sempre na rede.
-  if (url.hostname.includes('nominatim')) return;
+  // Busca de endereço e consulta do MOCI: sempre na rede, nunca do cache.
+  if (url.hostname.includes('nominatim') || url.hostname.endsWith('script.google.com') || url.hostname.endsWith('googleusercontent.com')) return;
 
   // Fontes e bibliotecas: cache primeiro.
   if (url.origin !== self.location.origin) {
