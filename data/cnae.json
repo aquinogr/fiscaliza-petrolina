@@ -17,7 +17,7 @@
     "5611205": { "desc": "Bar com entretenimento", "categoria": "publico" },
     "9329801": { "desc": "Casa noturna / salão de dança", "categoria": "publico" },
     "8230002": { "desc": "Casa de festas e eventos", "categoria": "publico" },
-    "8230001": { "desc": "Organização de feiras e eventos", "categoria": "publico" },
+    "8230001": { "desc": "Organização de eventos (escritório)", "categoria": "comercio" },
     "9491000": { "desc": "Templo religioso", "categoria": "publico" },
     "5914600": { "desc": "Cinema", "categoria": "publico" },
     "9312300": { "desc": "Clube social ou esportivo", "categoria": "publico" },

@@ -50,7 +50,7 @@ CNEFE_PADRAO = CNEFE_RAIZ + 'Arquivos_CNEFE/CSV/Municipio/{uf_cod}_{uf}/{ibge}_{
 E_BASICO, E_ORDEM, E_DV, E_FANTASIA, E_SITUACAO, E_INICIO, E_CNAE, E_CNAE_SEC = 0, 1, 2, 4, 5, 10, 11, 12
 E_TIPO_LOG, E_LOG, E_NUM, E_COMPL, E_BAIRRO, E_CEP, E_UF, E_MUN = 13, 14, 15, 16, 17, 18, 19, 20
 # Layout do arquivo Empresas
-EMP_BASICO, EMP_RAZAO, EMP_NATUREZA = 0, 1, 2
+EMP_BASICO, EMP_RAZAO, EMP_NATUREZA, EMP_PORTE = 0, 1, 2, 5
 NATUREZA_EMPRESARIO_INDIVIDUAL = '2135'
 
 
@@ -237,7 +237,7 @@ def nomes_empresas(arquivos, basicos: set[str]) -> dict[str, tuple[str, str]]:
         log(f'lendo {arq.name}')
         for row in ler_csv_zip(arq):
             if len(row) > 2 and row[EMP_BASICO] in basicos:
-                out[row[EMP_BASICO]] = (row[EMP_RAZAO].strip(), row[EMP_NATUREZA].strip())
+                out[row[EMP_BASICO]] = (row[EMP_RAZAO].strip(), row[EMP_NATUREZA].strip(), row[EMP_PORTE].strip() if len(row) > EMP_PORTE else '')
         apagar_se_baixado(arq)
     return out
 
@@ -426,7 +426,7 @@ def main() -> int:
         if not ponto:
             sem_ponto += 1
             continue
-        razao, natureza = nomes.get(e['basico'], ('', ''))
+        razao, natureza, porte = nomes.get(e['basico'], ('', '', ''))
         if e['fantasia']:
             nome = e['fantasia']
         elif razao and natureza != NATUREZA_EMPRESARIO_INDIVIDUAL:
@@ -440,7 +440,7 @@ def main() -> int:
         feats.append({'type': 'Feature', 'geometry': {'type': 'Point', 'coordinates': [round(ponto[1], 6), round(ponto[0], 6)]},
                       'properties': {'cnpj': e['cnpj'], 'nome': limpar_nome(nome), 'cnae': e['cnae'], 'cnae_principal': e['cnae_principal'],
                                      'endereco': endereco, 'bairro': e['bairro'].title(), 'cep': e['cep'], 'abertura': e['abertura'],
-                                     'geo_precisao': precisao}})
+                                     'geo_precisao': precisao, 'ei': natureza == NATUREZA_EMPRESARIO_INDIVIDUAL, 'porte': porte}})
 
     gj = {'type': 'FeatureCollection', 'metadata': {**resumo, 'fonte': 'Receita Federal (CNPJ) + IBGE (CNEFE 2022)', 'gerado_em': datetime.now().isoformat(timespec='seconds')}, 'features': feats}
     Path(a.saida).write_text(json.dumps(gj, ensure_ascii=False), encoding='utf-8')
@@ -459,8 +459,7 @@ def main() -> int:
             f.write('## Base pública de Petrolina\n\n| Item | Valor |\n|---|---|\n')
             for k, v in resumo.items():
                 f.write(f'| {k} | {v} |\n')
-            f.write('\nBaixe o artefato **estabelecimentos-petrolina** e importe no painel em Ajustes > Dados, '
-                    'ou ligue o Supabase para a atualização ir direto ao site.\n')
+            f.write('\nA base foi gravada em `data/estabelecimentos.geojson` e o site passa a usá-la na próxima abertura.\n')
     return 0
 
 

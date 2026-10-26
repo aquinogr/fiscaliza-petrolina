@@ -32,6 +32,7 @@ export function pontuar(e, ctx) {
     mOc = [grande ? `Edificação de ${Math.round(d.area).toLocaleString('pt-BR')} m²` : 'Edificação cadastrada no MOCI', alta ? 'de maior altura' : null, d.caldeira ? 'com caldeira' : null].filter(Boolean).join(', ');
     info.desc = 'Edificação cadastrada no MOCI';
   }
+  if (e.ei && info.categoria !== 'inflamaveis') { fOc *= 0.6; mOc += ' (empresário individual)'; }
   partes.push({ criterio: 'Ocupação', pontos: pesos.ocupacao * fOc, max: pesos.ocupacao, motivo: mOc });
 
   // 2. Situação documental conhecida
@@ -40,7 +41,7 @@ export function pontuar(e, ctx) {
   const vencMoci = e.moci?.situacao === 'vencido' && e.moci.validade;
   if (sit === 'vencido') { fDoc = 1; mDoc = vencMoci ? `AVCB vencido há ${diffDays(hoje, e.moci.validade)} dias (MOCI)` : 'Documento vencido'; }
   else if (sit === 'sem_documento') { fDoc = 0.95; mDoc = e.moci ? 'Sem AVCB no MOCI' : 'Sem documento em campo'; }
-  else if (sit === 'desconhecida') { fDoc = 0.9; mDoc = 'Sem registro conhecido no CBMPE'; }
+  else if (sit === 'desconhecida') { fDoc = 0.6; mDoc = 'Sem registro conhecido no CBMPE'; }
   else if (sit === 'valido' && e.validade_doc && diffDays(e.validade_doc, hoje) < 0) { fDoc = 0.85; mDoc = 'Validade expirou'; }
   else if (sit === 'valido' && e.validade_doc && diffDays(e.validade_doc, hoje) <= 60) { fDoc = 0.4; mDoc = 'Documento vence em até 60 dias'; }
   else if (sit === 'em_andamento') { fDoc = 0.3; mDoc = 'Processo em andamento'; }

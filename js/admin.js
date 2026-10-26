@@ -93,7 +93,7 @@ export function iniciarAdmin(root, { sair }) {
   const S = () => st.S();
   const corV = (vid) => st.vist(vid)?.cor || CINZA;
   const nomeV = (vid) => st.vist(vid)?.nome || 'Na fila';
-  const setorNome = (p) => st.setorDoPonto(p)?.nome || 'Fora dos setores';
+  const setorNome = (p) => st.setorDoPonto(p)?.nome || (S().setores.length ? 'Fora dos setores' : (p?.bairro || ''));
   const opcoesVist = (comFila = true) => [...(comFila ? [['', 'Deixar na fila']] : []), ...S().vistoriadores.filter((v) => v.ativo !== false).map((v) => [v.id, v.nome])];
 
   function focar(p, zoom = 17) { if (p) map.flyTo([p.lat, p.lng], Math.max(map.getZoom(), zoom), { duration: 0.6 }); }
@@ -384,7 +384,7 @@ export function iniciarAdmin(root, { sair }) {
     const e = s.estab;
     const motivos = s.partes.filter((p) => p.pontos > 0).sort((a, b) => b.pontos - a.pontos).slice(0, 3);
     return h('div', { class: 'scard' },
-      h('div', { class: 'score', style: { '--c': s.info.cat?.cor || CINZA }, title: 'Escore de prioridade (0 a 100)' }, String(s.score)),
+      h('div', { class: 'score', style: { '--c': s.info.cat?.cor || (s.estab.moci ? '#C8102E' : CINZA) }, title: 'Escore de prioridade (0 a 100)' }, String(s.score)),
       h('div', { class: 'grow' },
         h('div', { class: 'row between' }, h('strong', {}, e.nome), s.pedido ? h('span', { class: 'tag tag-warn' }, 'Encaixe pedido') : null),
         h('div', { class: 'mmeta' }, s.info.desc, h('span', {}, setorNome(e)), ...s.tags.map((t) => h('span', { class: 'tag' }, t))),
@@ -798,7 +798,7 @@ export function iniciarAdmin(root, { sair }) {
     // sugestões
     if (ui.camadas.sugestoes) {
       sugCache.slice(0, 80).forEach((s) => {
-        const mk = L.marker([s.estab.lat, s.estab.lng], { icon: iconeSugestao(s.score, s.info.cat?.cor) });
+        const mk = L.marker([s.estab.lat, s.estab.lng], { icon: iconeSugestao(s.score, s.info.cat?.cor || (s.estab.moci ? '#C8102E' : null)) });
         mk.bindPopup(() => popupSugestao(s), { minWidth: 240 });
         G.sugestoes.addLayer(mk);
         marcadores.set('sug-' + s.estab.id, mk);

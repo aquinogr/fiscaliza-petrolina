@@ -161,8 +161,7 @@ insert into config (id, dados) values (1, '{
   "base": {"lat": -9.38, "lng": -40.503},
   "raio_checkin": 150, "capacidade_dia": 7, "prazo_retorno_dias": 30,
   "pesos": {"ocupacao": 30, "documental": 25, "historico": 20, "exposicao": 15, "tempo": 10},
-  "cotas": {"solicitada": 65, "urgencia": 20, "proativa": 15},
-  "limite_sugestao": 45
+  "limite_sugestao": 55
 }') on conflict (id) do nothing;
 
 -- ------------------------------------------------------------ papéis

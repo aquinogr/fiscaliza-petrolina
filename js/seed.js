@@ -23,7 +23,7 @@ export function estadoInicial() {
       capacidade_dia: 7,
       prazo_retorno_dias: 30,
       pesos: { ocupacao: 30, documental: 25, historico: 20, exposicao: 15, tempo: 10 },
-      limite_sugestao: 45,
+      limite_sugestao: 55,
       moci_cidades: 'Petrolina',
       regularizacao_ativa: false, // versão 2.0
     },

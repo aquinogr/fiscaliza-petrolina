@@ -73,7 +73,7 @@ function mesclarBase() {
     if (!p.cnpj || !isFinite(lat) || !isFinite(lng)) continue;
     const id = `r${p.cnpj}`;
     vistos.add(id);
-    const pub = { cnpj: p.cnpj, nome: p.nome, cnae: p.cnae, endereco: p.endereco || '', bairro: p.bairro || '', abertura: p.abertura || null, geo_precisao: p.geo_precisao || null };
+    const pub = { cnpj: p.cnpj, nome: p.nome, cnae: p.cnae, endereco: p.endereco || '', bairro: p.bairro || '', abertura: p.abertura || null, geo_precisao: p.geo_precisao || null, ei: !!p.ei, porte: p.porte || '' };
     const e = porId.get(id);
     if (e) {
       Object.assign(e, pub);
