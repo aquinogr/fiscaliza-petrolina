@@ -2,10 +2,10 @@
 /* global L */
 import * as st from './store.js';
 import { h, mount, clear, sheet, toast, field, select, chip, today, addDays, fmtDate, fmtTime, fmtDist, relDays, diffDays, copyText, confirmar, debounce } from './ui.js';
-import { TIPOS, TIPOS_CADASTRO, FILAS, STATUS, PRIORIDADES, RESULTADO_NOME, SITUACAO_NOME, MOTIVOS_REJEICAO, STATUS_EVENTO, STATUS_EVENTO_NOME, RESULTADOS_IMPRODUTIVOS, formatarCNPJ } from './dominio.js';
+import { TIPOS, TIPOS_CADASTRO, FILAS, STATUS, PRIORIDADES, RESULTADO_NOME, SITUACAO_NOME, MOTIVOS_REJEICAO, STATUS_EVENTO, STATUS_EVENTO_NOME, RESULTADOS_IMPRODUTIVOS, formatarCNPJ, ART7_ORDEM, corMociStatus } from './dominio.js';
 import { gerarSugestoes, scoreDe, cnaeInfo, semanaComEventoGrande } from './score.js';
 import { criarMapa, iconeMissao, iconeFila, iconeSugestao, iconeLocal, iconeBase, iconePonto, PETROLINA } from './map.js';
-import { geocodificar, centroide, dist, extensaoRota } from './geo.js';
+import { geocodificar, centroide, dist, extensaoRota, poligonoBairro } from './geo.js';
 import { fotoURL } from './fotos.js';
 import { marca } from './marca.js';
 import { buscarMoci, linhasMoci, MOCI_SITE } from './moci.js';
@@ -18,13 +18,17 @@ export function iniciarAdmin(root, { sair }) {
     data: today(), aba: 'hoje', filtroTipo: '',
     camadas: { setores: true, missoes: true, fila: true, sugestoes: false, locais: true, base: false },
     desenho: null, escolhendoBase: false, limiteSug: 30, soVencidos: false, incluirSemAvcb: false, mociCarregando: false,
+    filtrosArt7: new Set(), filtrosBairro: new Set(), buscaBairro: '', bairrosAberto: false,
+    alvoVist: '', bairroFoco: '', buscaAtribuir: '', limiteAtribuir: 24, flashVist: '',
   };
+
+  const normBairro = (b) => String(b || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toUpperCase();
 
   // ---------- estrutura ----------
   const inputData = h('input', { type: 'date', value: ui.data, 'aria-label': 'Data da escala', onchange: (e) => { if (e.target.value) { ui.data = e.target.value; render(); } } });
   const mudarDia = (n) => { ui.data = addDays(ui.data, n); inputData.value = ui.data; render(); };
   const rotuloDia = h('span', { class: 'date-rel' });
-  const abas = [['hoje', 'Escala'], ['fila', 'Fila'], ['sugestoes', 'Sugestões'], ['eventos', 'Eventos'], ['relatorio', 'Relatório']];
+  const abas = [['hoje', 'Escala'], ['fila', 'Fila'], ['sugestoes', 'Sugestões'], ['atribuir', 'Atribuir'], ['eventos', 'Eventos'], ['relatorio', 'Relatório']];
   const regAtiva = !!st.S().config.regularizacao_ativa;
   const tabs = h('nav', { class: 'tabs', role: 'tablist' }, abas.map(([k, l]) => h('button', {
     role: 'tab', type: 'button', class: 'tab', dataset: { aba: k }, onclick: () => { ui.aba = k; renderPainel(); },
@@ -57,7 +61,7 @@ export function iniciarAdmin(root, { sair }) {
   const map = criarMapa(mapaEl, { zoom: 13 });
   const canvas = L.canvas({ padding: 0.3 });
   const G = {
-    setores: L.layerGroup().addTo(map), rotas: L.layerGroup().addTo(map), missoes: L.layerGroup().addTo(map),
+    setores: L.layerGroup().addTo(map), bairroDestaque: L.layerGroup().addTo(map), rotas: L.layerGroup().addTo(map), missoes: L.layerGroup().addTo(map),
     fila: L.layerGroup().addTo(map), sugestoes: L.layerGroup(), locais: L.layerGroup().addTo(map),
     base: L.layerGroup(), sede: L.layerGroup().addTo(map), desenho: L.layerGroup().addTo(map), foco: L.layerGroup().addTo(map),
   };
@@ -122,12 +126,25 @@ export function iniciarAdmin(root, { sair }) {
     });
   }
 
+  let sugTodasCache = [];
   let sugCache = [];
+  const temFiltroSug = () => ui.filtrosArt7.size > 0 || ui.filtrosBairro.size > 0 || ui.soVencidos;
+  function sugFiltradas() {
+    const fonte = temFiltroSug() ? sugTodasCache : sugCache;
+    return fonte.filter((s) => {
+      if (ui.soVencidos && s.estab.situacao_doc !== 'vencido') return false;
+      if (ui.filtrosArt7.size && !ui.filtrosArt7.has(s.art7.codigo)) return false;
+      if (ui.filtrosBairro.size && !ui.filtrosBairro.has(normBairro(s.estab.bairro))) return false;
+      return true;
+    });
+  }
   function renderPainel() {
-    sugCache = gerarSugestoes(S());
-    contadoresAbas(sugCache);
+    sugTodasCache = gerarSugestoes(S(), { ignorarLimite: true });
+    const lim = S().config.limite_sugestao ?? 45;
+    sugCache = sugTodasCache.filter((s) => s.score >= lim);
+    contadoresAbas(sugFiltradas());
     const top = corpo.scrollTop;
-    const telas = { hoje: telaHoje, fila: telaFila, sugestoes: telaSugestoes, eventos: telaEventos, relatorio: telaRelatorio };
+    const telas = { hoje: telaHoje, fila: telaFila, sugestoes: telaSugestoes, atribuir: telaAtribuir, eventos: telaEventos, relatorio: telaRelatorio };
     mount(corpo, telas[ui.aba]());
     corpo.scrollTop = top;
   }
@@ -325,19 +342,188 @@ export function iniciarAdmin(root, { sair }) {
   }
 
   // ---------- aba: sugestões ----------
+  function atualizarFiltrosSug() {
+    ui.limiteSug = 30;
+    ui.limiteAtribuir = 24;
+    renderPainel();
+    renderDestaqueBairros();
+    if (ui.camadas.sugestoes) renderMapa();
+  }
+
+  // Destaca no mapa o(s) bairro(s) selecionado(s) ou sob o cursor, com efeito luminoso futurista.
+  function renderDestaqueBairros({ focarNoMapa = false } = {}) {
+    G.bairroDestaque.clearLayers();
+    const chaves = new Set();
+    if (ui.bairroFoco) chaves.add(ui.bairroFoco);
+    for (const k of ui.filtrosBairro) chaves.add(k);
+    if (!chaves.size) return;
+
+    const bounds = [];
+    for (const key of chaves) {
+      const todosDoBairro = S().estabelecimentos.filter((e) => e.ativo !== false && normBairro(e.bairro) === key);
+      const daLista = sugTodasCache.filter((s) => normBairro(s.estab.bairro) === key && (!ui.filtrosArt7.size || ui.filtrosArt7.has(s.art7.codigo)));
+      const geo = poligonoBairro(todosDoBairro.length ? todosDoBairro : daLista.map((s) => s.estab));
+      if (!geo) continue;
+      const nomeExibir = todosDoBairro[0]?.bairro || daLista[0]?.estab?.bairro || key;
+      const ehFoco = key === ui.bairroFoco;
+      const cor = ehFoco ? '#06B6D4' : '#3B82F6';
+      if (geo.tipo === 'poligono') {
+        L.polygon(geo.anel, {
+          color: cor, weight: ehFoco ? 8 : 5, opacity: 0.22, fillColor: cor, fillOpacity: ehFoco ? 0.16 : 0.09, interactive: false,
+        }).addTo(G.bairroDestaque);
+        const poly = L.polygon(geo.anel, {
+          color: cor, weight: ehFoco ? 3 : 2, opacity: 0.95, dashArray: '10 6', fillOpacity: 0, className: 'bairro-poly-glow', interactive: false,
+        }).addTo(G.bairroDestaque);
+        poly.bindTooltip(`📍 ${nomeExibir} · ${daLista.length} empresa(s)`, { permanent: true, direction: 'center', className: 'bairro-hud' });
+        bounds.push(...geo.anel);
+      } else {
+        const c = L.circle([geo.centro.lat, geo.centro.lng], {
+          radius: geo.raio, color: cor, weight: 3, dashArray: '8 5', fillColor: cor, fillOpacity: 0.16, className: 'bairro-poly-glow', interactive: false,
+        }).addTo(G.bairroDestaque);
+        c.bindTooltip(`📍 ${nomeExibir} · ${daLista.length} empresa(s)`, { permanent: true, direction: 'center', className: 'bairro-hud' });
+        bounds.push([geo.centro.lat, geo.centro.lng]);
+      }
+    }
+    if (focarNoMapa && bounds.length) {
+      map.flyToBounds(L.latLngBounds(bounds).pad(0.18), { duration: 0.65, maxZoom: 15 });
+    }
+  }
+
+  function blocoFiltrosSug(filtradas) {
+    // Contagens por classificação Art. 7º (respeitando filtro de bairro e só vencidos, se ativos)
+    const baseArt7 = sugTodasCache.filter((s) => (!ui.soVencidos || s.estab.situacao_doc === 'vencido') && (!ui.filtrosBairro.size || ui.filtrosBairro.has(normBairro(s.estab.bairro))));
+    const contaArt7 = new Map();
+    const metaArt7 = new Map();
+    for (const s of baseArt7) {
+      const k = s.art7.codigo;
+      contaArt7.set(k, (contaArt7.get(k) || 0) + 1);
+      if (!metaArt7.has(k)) metaArt7.set(k, s.art7);
+    }
+    // Inclui também classificações já marcadas pelo usuário (mesmo com 0 no cruzamento atual)
+    for (const k of ui.filtrosArt7) {
+      if (!contaArt7.has(k)) {
+        contaArt7.set(k, 0);
+        const ref = sugTodasCache.find((s) => s.art7.codigo === k);
+        if (ref) metaArt7.set(k, ref.art7);
+      }
+    }
+    const chavesArt7 = [...contaArt7.keys()].sort((a, b) => {
+      const ia = ART7_ORDEM.indexOf(a), ib = ART7_ORDEM.indexOf(b);
+      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    });
+
+    // Contagens por bairro (respeitando filtro Art. 7º e só vencidos, se ativos)
+    const baseBairros = sugTodasCache.filter((s) => (!ui.soVencidos || s.estab.situacao_doc === 'vencido') && (!ui.filtrosArt7.size || ui.filtrosArt7.has(s.art7.codigo)));
+    const mapaBairros = new Map(); // norm -> { nome, n }
+    for (const s of baseBairros) {
+      const raw = String(s.estab.bairro || '').trim();
+      const key = normBairro(raw);
+      if (!key) continue;
+      const cur = mapaBairros.get(key) || { key, nome: raw, n: 0 };
+      cur.n++;
+      mapaBairros.set(key, cur);
+    }
+    for (const key of ui.filtrosBairro) {
+      if (!mapaBairros.has(key)) {
+        const ref = sugTodasCache.find((s) => normBairro(s.estab.bairro) === key);
+        mapaBairros.set(key, { key, nome: ref?.estab?.bairro || key, n: 0 });
+      }
+    }
+    const todosBairros = [...mapaBairros.values()].sort((a, b) => b.n - a.n || a.nome.localeCompare(b.nome, 'pt-BR'));
+
+    const listaBairrosEl = h('div', { class: 'fchips bairro-list' });
+    const renderBairros = (q) => {
+      const nq = normBairro(q);
+      const visiveis = nq ? todosBairros.filter((b) => b.key.includes(nq)) : todosBairros.slice(0, 40);
+      clear(listaBairrosEl);
+      if (!visiveis.length) {
+        listaBairrosEl.append(h('span', { class: 'muted small' }, 'Nenhum bairro encontrado.'));
+        return;
+      }
+      visiveis.forEach((b) => {
+        const ativo = ui.filtrosBairro.has(b.key);
+        listaBairrosEl.append(h('button', {
+          type: 'button',
+          class: `fchip${ativo ? ' on' : ''}`,
+          'aria-pressed': String(ativo),
+          onclick: () => {
+            if (ativo) ui.filtrosBairro.delete(b.key); else ui.filtrosBairro.add(b.key);
+            atualizarFiltrosSug();
+          },
+        }, `${b.nome} (${b.n})`));
+      });
+      if (!nq && todosBairros.length > 40) {
+        listaBairrosEl.append(h('span', { class: 'muted small' }, `+ ${todosBairros.length - 40} bairros — use a busca acima.`));
+      }
+    };
+    renderBairros(ui.buscaBairro);
+
+    const inputBuscaBairro = h('input', {
+      type: 'search',
+      value: ui.buscaBairro,
+      placeholder: 'Buscar bairro…',
+      'aria-label': 'Buscar bairro',
+      oninput: (ev) => { ui.buscaBairro = ev.target.value; renderBairros(ui.buscaBairro); },
+    });
+
+    const temAlgum = ui.filtrosArt7.size > 0 || ui.filtrosBairro.size > 0 || ui.soVencidos;
+
+    return h('section', { class: 'block filter-box' },
+      h('div', { class: 'block-head' },
+        h('h3', {}, 'Filtrar por Art. 7º (COSCIP-PE) e bairro'),
+        temAlgum ? h('button', {
+          class: 'link small', type: 'button',
+          onclick: () => { ui.filtrosArt7.clear(); ui.filtrosBairro.clear(); ui.buscaBairro = ''; ui.soVencidos = false; atualizarFiltrosSug(); },
+        }, 'Limpar filtros') : null),
+      h('div', { class: 'fchips' }, chavesArt7.map((k) => {
+        const info = metaArt7.get(k);
+        const ativo = ui.filtrosArt7.has(k);
+        const n = contaArt7.get(k) || 0;
+        const titulo = k === 'MOCI' ? 'MOCI' : `${k} · ${info.curto}`;
+        return h('button', {
+          type: 'button',
+          class: `fchip${ativo ? ' on' : ''}`,
+          style: { '--c': info.cor },
+          'aria-pressed': String(ativo),
+          title: `${info.nome}${info.artigo ? ` (${info.artigo})` : ''}`,
+          onclick: () => {
+            if (ativo) ui.filtrosArt7.delete(k); else ui.filtrosArt7.add(k);
+            atualizarFiltrosSug();
+          },
+        }, h('span', { class: 'fchip-ico', 'aria-hidden': 'true' }, info.emoji), `${titulo} (${n})`);
+      })),
+      ui.filtrosBairro.size ? h('div', { class: 'fchips' }, [...ui.filtrosBairro].map((key) => {
+        const b = mapaBairros.get(key) || { key, nome: key };
+        return h('button', {
+          type: 'button', class: 'fchip on',
+          onclick: () => { ui.filtrosBairro.delete(key); atualizarFiltrosSug(); },
+        }, `📍 ${b.nome} ×`);
+      })) : null,
+      h('details', {
+        class: 'bairro-details',
+        open: ui.bairrosAberto,
+        ontoggle: (ev) => { ui.bairrosAberto = ev.target.open; },
+      },
+        h('summary', {}, ui.filtrosBairro.size ? `Bairros (${ui.filtrosBairro.size} selecionado${ui.filtrosBairro.size > 1 ? 's' : ''})` : `Filtrar por bairro (${todosBairros.length} bairros)`),
+        h('div', { class: 'stack bairro-body' }, inputBuscaBairro, listaBairrosEl)),
+      h('p', { class: 'muted small' }, temAlgum
+        ? `${filtradas.length} estabelecimento(s) encontrado(s) nos filtros selecionados (classificação indicativa pelo CNAE).`
+        : `${filtradas.length} sugestão(ões) prioritária(s). Selecione uma ou mais classificações do Art. 7º ou bairros para ver todas as empresas daquele recorte.`));
+  }
+
   function telaSugestoes() {
     const ev = semanaComEventoGrande(S());
-    const filtradas = ui.soVencidos ? sugCache.filter((x) => x.estab.situacao_doc === 'vencido') : sugCache;
+    const filtradas = sugFiltradas();
     const lista = filtradas.slice(0, ui.limiteSug);
     return h('div', { class: 'stack' },
       blocoMoci(),
-      h('p', { class: 'hint' }, 'Geradas a partir da base pública (CNPJ e endereços do IBGE) e do que as equipes registram em campo. Nada vira missão sem a sua decisão; cada rejeição ensina o motor a não repetir.'),
+      blocoFiltrosSug(filtradas),
       h('div', { class: 'row gap wrap' },
         h('button', { class: 'btn', type: 'button', onclick: () => abrirCriterios() }, 'Critérios'),
         h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: ui.camadas.sugestoes, onchange: (e) => { ui.camadas.sugestoes = e.target.checked; aplicarCamadas(); syncCheck(); renderMapa(); } }), 'Mostrar no mapa'),
-        h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: ui.soVencidos, onchange: (e) => { ui.soVencidos = e.target.checked; renderPainel(); } }), 'Só AVCB vencido')),
+        h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: ui.soVencidos, onchange: (e) => { ui.soVencidos = e.target.checked; atualizarFiltrosSug(); } }), 'Só AVCB vencido')),
       ev ? h('p', { class: 'note note-warn' }, `${ev.nome} acontece ${relDays(ev.inicio)}. Na semana de evento grande, a sugestão é segurar a fiscalização proativa.`) : null,
-      lista.length ? lista.map((s) => cardSugestao(s)) : h('p', { class: 'empty' }, ui.soVencidos ? 'Nenhum AVCB vencido entre as sugestões. Os que já estão na fila ou com missão não aparecem aqui.' : `Nenhuma sugestão acima de ${S().config.limite_sugestao} pontos. Você pode baixar o limite em Critérios.`),
+      lista.length ? lista.map((s) => cardSugestao(s)) : h('p', { class: 'empty' }, temFiltroSug() ? 'Nenhuma empresa encontrada com os filtros escolhidos.' : `Nenhuma sugestão acima de ${S().config.limite_sugestao} pontos. Você pode baixar o limite em Critérios ou escolher uma classificação do Art. 7º acima.`),
       filtradas.length > lista.length ? h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => { ui.limiteSug += 30; renderPainel(); } }, `Mostrar mais (${filtradas.length - lista.length})`) : null);
   }
 
@@ -382,17 +568,247 @@ export function iniciarAdmin(root, { sair }) {
 
   function cardSugestao(s) {
     const e = s.estab;
+    const a7 = s.art7;
     const motivos = s.partes.filter((p) => p.pontos > 0).sort((a, b) => b.pontos - a.pontos).slice(0, 3);
     return h('div', { class: 'scard' },
-      h('div', { class: 'score', style: { '--c': s.info.cat?.cor || (s.estab.moci ? '#C8102E' : CINZA) }, title: 'Escore de prioridade (0 a 100)' }, String(s.score)),
+      h('div', {
+        class: 'score score-ico',
+        style: { '--c': a7.cor },
+        title: `${a7.rotulo}${a7.artigo && a7.artigo !== 'MOCI' ? ` (${a7.artigo}, COSCIP-PE)` : ''}`,
+        'aria-label': a7.rotulo,
+      }, a7.emoji),
       h('div', { class: 'grow' },
         h('div', { class: 'row between' }, h('strong', {}, e.nome), s.pedido ? h('span', { class: 'tag tag-warn' }, 'Encaixe pedido') : null),
-        h('div', { class: 'mmeta' }, s.info.desc, h('span', {}, setorNome(e)), ...s.tags.map((t) => h('span', { class: 'tag' }, t))),
+        h('div', { class: 'mmeta' },
+          h('span', { class: 'tag tag-art7', style: { '--c': a7.cor } }, a7.rotulo),
+          s.info.desc !== 'Edificação cadastrada no MOCI' ? h('span', {}, s.info.desc) : null,
+          h('span', {}, setorNome(e)),
+          ...s.tags.filter((t) => !(a7.codigo === 'MOCI' && t === 'MOCI')).map((t) => h('span', { class: 'tag' }, t))),
         h('ul', { class: 'motivos' }, motivos.map((p) => h('li', {}, p.motivo))),
         h('div', { class: 'row gap' },
           h('button', { class: 'btn btn-small', type: 'button', onclick: () => { ui.camadas.sugestoes = true; aplicarCamadas(); syncCheck(); renderMapa(); focar(e); setTimeout(() => marcadores.get('sug-' + e.id)?.openPopup(), 650); } }, 'Ver no mapa'),
           h('button', { class: 'btn btn-small', type: 'button', onclick: () => rejeitar(e) }, 'Rejeitar'),
           h('button', { class: 'btn btn-small btn-primary', type: 'button', onclick: () => aceitar(e, s.score) }, 'Aceitar'))));
+  }
+
+  // ---------- aba: atribuir (drag-and-drop futurista + bairro no mapa) ----------
+  function telaAtribuir() {
+    const cap = S().config.capacidade_dia || 7;
+    const vists = S().vistoriadores.filter((v) => v.ativo !== false);
+    const equipeHoje = new Set(st.equipeDo(ui.data));
+    const fonteBase = sugTodasCache;
+
+    // Contagens Art. 7º
+    const contaArt7 = new Map();
+    const metaArt7 = new Map();
+    for (const s of fonteBase) {
+      const k = s.art7.codigo;
+      contaArt7.set(k, (contaArt7.get(k) || 0) + 1);
+      if (!metaArt7.has(k)) metaArt7.set(k, s.art7);
+    }
+    const chavesArt7 = [...contaArt7.keys()].sort((a, b) => {
+      const ia = ART7_ORDEM.indexOf(a), ib = ART7_ORDEM.indexOf(b);
+      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    });
+
+    // Filtradas por Art. 7º e busca
+    const porArt7 = fonteBase.filter((s) => !ui.filtrosArt7.size || ui.filtrosArt7.has(s.art7.codigo));
+    const mapaBairros = new Map();
+    for (const s of porArt7) {
+      const raw = String(s.estab.bairro || '').trim();
+      const key = normBairro(raw);
+      if (!key) continue;
+      const cur = mapaBairros.get(key) || { key, nome: raw, itens: [] };
+      cur.itens.push(s);
+      mapaBairros.set(key, cur);
+    }
+    const bairrosOrdenados = [...mapaBairros.values()].sort((a, b) => b.itens.length - a.itens.length || a.nome.localeCompare(b.nome, 'pt-BR'));
+
+    const q = normBairro(ui.buscaAtribuir);
+    const listaEstabs = porArt7.filter((s) => {
+      if (ui.bairroFoco && normBairro(s.estab.bairro) !== ui.bairroFoco) return false;
+      if (q && !normBairro(s.estab.nome).includes(q) && !normBairro(s.estab.bairro).includes(q) && !normBairro(s.info.desc).includes(q)) return false;
+      return true;
+    });
+
+    const dispararFlash = (vid) => {
+      ui.flashVist = vid;
+      setTimeout(() => { if (ui.flashVist === vid) { ui.flashVist = ''; renderPainel(); } }, 750);
+    };
+
+    const despacharEstab = (estabId, vid) => {
+      const s = fonteBase.find((x) => x.estab.id === estabId);
+      if (!s) return;
+      st.aceitarSugestao(s.estab.id, vid, ui.data, s.score);
+      st.reordenarRota(vid, ui.data);
+      dispararFlash(vid);
+      toast(`⚡ ${s.art7.emoji} ${s.estab.nome} atribuído a ${nomeV(vid)}.`, 'ok');
+    };
+
+    const despacharBairro = (bairroKey, vid) => {
+      const b = mapaBairros.get(bairroKey);
+      if (!b || !b.itens.length) { toast('Nenhuma empresa disponível neste bairro.', 'warn'); return; }
+      const r = st.atribuirLoteSugestoes(b.itens, vid, ui.data, { respeitarCapacidade: true, rotulo: b.nome });
+      if (!r.criadas) {
+        toast(`${nomeV(vid)} já atingiu a capacidade do dia (${cap} missões).`, 'warn');
+        return;
+      }
+      dispararFlash(vid);
+      toast(`⚡ ${r.criadas} empresa(s) de ${b.nome} atribuída(s) a ${nomeV(vid)} — rota recalculada.${r.semVaga ? ` (${r.semVaga} ficaram fora pelo limite diário.)` : ''}`, 'ok');
+    };
+
+    // Zonas de soltura (Drop Zones) dos vistoriadores — fixas no topo
+    const dropZones = h('section', { class: 'drop-dock' },
+      h('div', { class: 'row between' },
+        h('strong', { class: 'dock-title' }, `⚡ Despacho rápido · ${fmtDate(ui.data, { short: true })}`),
+        ui.alvoVist ? h('button', { class: 'link small', type: 'button', onclick: () => { ui.alvoVist = ''; renderPainel(); } }, 'Desmarcar alvo') : h('span', { class: 'muted small' }, 'Arraste ou toque num vistoriador')),
+      h('div', { class: 'drop-grid' }, vists.map((v) => {
+        const qtd = st.missoesDo(v.id, ui.data).length;
+        const pct = Math.min(100, Math.round((qtd / cap) * 100));
+        const ativo = ui.alvoVist === v.id;
+        const flash = ui.flashVist === v.id;
+        const emServico = equipeHoje.has(v.id);
+        const card = h('div', {
+          class: `drop-zone${ativo ? ' alvo' : ''}${flash ? ' drop-flash' : ''}${qtd >= cap ? ' cheio' : ''}`,
+          style: { '--c': v.cor },
+          role: 'button',
+          tabindex: '0',
+          title: 'Arraste um estabelecimento ou bairro aqui, ou clique para selecionar como alvo',
+          onclick: () => { ui.alvoVist = ativo ? '' : v.id; renderPainel(); },
+          ondragover: (ev) => { ev.preventDefault(); ev.dataTransfer.dropEffect = 'move'; card.classList.add('drag-over'); },
+          ondragleave: () => { card.classList.remove('drag-over'); },
+          ondrop: (ev) => {
+            ev.preventDefault();
+            card.classList.remove('drag-over');
+            try {
+              const payload = JSON.parse(ev.dataTransfer.getData('application/json') || ev.dataTransfer.getData('text/plain'));
+              if (payload?.tipo === 'estab') despacharEstab(payload.id, v.id);
+              else if (payload?.tipo === 'bairro') despacharBairro(payload.key, v.id);
+            } catch { /* ignora payload estranho */ }
+          },
+        },
+          h('div', { class: 'row between' },
+            h('span', { class: 'drop-name' }, h('span', { class: 'team-dot', style: { '--c': v.cor } }), v.nome),
+            h('span', { class: `drop-count${qtd >= cap ? ' txt-warn' : ''}` }, `${qtd}/${cap}`)),
+          h('div', { class: 'drop-bar' }, h('span', { style: { width: `${pct}%` } })),
+          h('div', { class: 'drop-hint' }, ativo ? '🎯 Alvo ativo (toque + Enviar)' : (emServico ? 'De serviço · solte aqui' : 'Fora da escala · solte aqui')));
+        return card;
+      })));
+
+    // Filtro rápido por Art. 7º
+    const barraArt7 = h('div', { class: 'fchips' }, chavesArt7.map((k) => {
+      const info = metaArt7.get(k);
+      const on = ui.filtrosArt7.has(k);
+      return h('button', {
+        type: 'button',
+        class: `fchip${on ? ' on' : ''}`,
+        style: { '--c': info.cor },
+        'aria-pressed': String(on),
+        title: info.nome,
+        onclick: () => {
+          if (on) ui.filtrosArt7.delete(k); else ui.filtrosArt7.add(k);
+          atualizarFiltrosSug();
+        },
+      }, h('span', { class: 'fchip-ico', 'aria-hidden': 'true' }, info.emoji), `${k === 'MOCI' ? 'MOCI' : k} (${contaArt7.get(k)})`);
+    }));
+
+    // Bairros arrastáveis + destaque futurista no mapa
+    const blocoBairros = h('section', { class: 'block block-neo' },
+      h('div', { class: 'block-head' },
+        h('h3', {}, '🗺️ Bairros (arraste ou clique para destacar no mapa)'),
+        ui.bairroFoco ? h('button', { class: 'link small', type: 'button', onclick: () => { ui.bairroFoco = ''; renderDestaqueBairros(); renderPainel(); } }, 'Limpar bairro') : null),
+      h('div', { class: 'fchips bairro-list' }, bairrosOrdenados.slice(0, 28).map((b) => {
+        const focado = ui.bairroFoco === b.key;
+        const pill = h('div', {
+          class: `bairro-drag${focado ? ' on' : ''}`,
+          draggable: 'true',
+          title: 'Arraste para um vistoriador para atribuir as empresas deste bairro, ou clique para destacar no mapa',
+          onmouseenter: () => { if (!ui.bairroFoco) { ui.bairroFoco = b.key; renderDestaqueBairros(); ui.bairroFoco = ''; } },
+          onmouseleave: () => { if (!ui.bairroFoco) renderDestaqueBairros(); },
+          ondragstart: (ev) => {
+            ev.dataTransfer.effectAllowed = 'move';
+            ev.dataTransfer.setData('application/json', JSON.stringify({ tipo: 'bairro', key: b.key }));
+            pill.classList.add('dragging');
+            ui.bairroFoco = b.key;
+            renderDestaqueBairros({ focarNoMapa: true });
+          },
+          ondragend: () => { pill.classList.remove('dragging'); },
+        },
+          h('button', {
+            type: 'button', class: 'bairro-drag-btn',
+            onclick: () => {
+              ui.bairroFoco = focado ? '' : b.key;
+              if (ui.bairroFoco) { ui.camadas.sugestoes = true; aplicarCamadas(); syncCheck(); }
+              renderDestaqueBairros({ focarNoMapa: !!ui.bairroFoco });
+              renderPainel();
+              if (ui.camadas.sugestoes) renderMapa();
+            },
+          }, `⠿ ${b.nome} (${b.itens.length})`),
+          ui.alvoVist ? h('button', {
+            type: 'button', class: 'bairro-send',
+            title: `Enviar empresas de ${b.nome} para ${nomeV(ui.alvoVist)}`,
+            onclick: (ev) => { ev.stopPropagation(); despacharBairro(b.key, ui.alvoVist); },
+          }, '+') : null);
+        return pill;
+      })));
+
+    // Estabelecimentos arrastáveis (pelo ícone do Art. 7º ou cartão)
+    const inputBusca = h('input', {
+      type: 'search',
+      value: ui.buscaAtribuir,
+      placeholder: 'Buscar empresa, bairro ou atividade…',
+      'aria-label': 'Buscar empresa para atribuir',
+      oninput: debounce((ev) => { ui.buscaAtribuir = ev.target.value; ui.limiteAtribuir = 24; renderPainel(); }, 180),
+    });
+
+    const visiveis = listaEstabs.slice(0, ui.limiteAtribuir);
+    const cardsEstab = visiveis.map((s) => {
+      const e = s.estab;
+      const a7 = s.art7;
+      const bKey = normBairro(e.bairro);
+      const item = h('div', {
+        class: 'drag-card',
+        draggable: 'true',
+        style: { '--c': a7.cor },
+        ondragstart: (ev) => {
+          ev.dataTransfer.effectAllowed = 'move';
+          ev.dataTransfer.setData('application/json', JSON.stringify({ tipo: 'estab', id: e.id }));
+          item.classList.add('dragging');
+        },
+        ondragend: () => { item.classList.remove('dragging'); },
+      },
+        h('div', { class: 'drag-ico', title: `Arraste para atribuir · ${a7.rotulo}` }, a7.emoji),
+        h('div', { class: 'grow' },
+          h('strong', { class: 'mname' }, e.nome),
+          h('div', { class: 'mmeta' },
+            h('span', { class: 'tag tag-art7', style: { '--c': a7.cor } }, a7.rotulo),
+            e.bairro ? h('span', {}, e.bairro) : null,
+            e.situacao_doc === 'vencido' ? h('span', { class: 'tag tag-alta' }, 'AVCB vencido') : null)),
+        h('div', { class: 'drag-actions' },
+          h('button', {
+            type: 'button', class: 'icon-btn-sm', title: 'Ver no mapa',
+            onclick: () => {
+              ui.camadas.sugestoes = true; aplicarCamadas(); syncCheck(); renderMapa();
+              if (bKey) { ui.bairroFoco = bKey; renderDestaqueBairros(); }
+              focar(e);
+              setTimeout(() => marcadores.get('sug-' + e.id)?.openPopup(), 650);
+            },
+          }, '📍'),
+          ui.alvoVist ? h('button', {
+            type: 'button', class: 'btn btn-small btn-primary',
+            onclick: () => despacharEstab(e.id, ui.alvoVist),
+          }, '+ Enviar') : null));
+      return item;
+    });
+
+    return h('div', { class: 'stack' },
+      dropZones,
+      barraArt7,
+      blocoBairros,
+      inputBusca,
+      h('p', { class: 'muted small' }, `${listaEstabs.length} estabelecimento(s) pronto(s) para arrastar${ui.bairroFoco ? ' neste bairro' : ''}.`),
+      cardsEstab.length ? h('div', { class: 'stack drag-list' }, cardsEstab) : h('p', { class: 'empty' }, 'Nenhum estabelecimento disponível neste filtro.'),
+      listaEstabs.length > visiveis.length ? h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => { ui.limiteAtribuir += 24; renderPainel(); } }, `Mostrar mais (${listaEstabs.length - visiveis.length})`) : null);
   }
 
   function aceitar(e, score) {
@@ -755,7 +1171,7 @@ export function iniciarAdmin(root, { sair }) {
 
   // ---------- render do mapa ----------
   function renderMapa() {
-    Object.entries(G).forEach(([k, g]) => { if (!['desenho', 'foco', 'base'].includes(k)) g.clearLayers(); });
+    Object.entries(G).forEach(([k, g]) => { if (!['desenho', 'foco', 'base', 'bairroDestaque'].includes(k)) g.clearLayers(); });
     marcadores.clear();
     const esc = st.escalaDo(ui.data);
 
@@ -797,8 +1213,11 @@ export function iniciarAdmin(root, { sair }) {
 
     // sugestões
     if (ui.camadas.sugestoes) {
-      sugCache.slice(0, 80).forEach((s) => {
-        const mk = L.marker([s.estab.lat, s.estab.lng], { icon: iconeSugestao(s.score, s.info.cat?.cor || (s.estab.moci ? '#C8102E' : null)) });
+      const listaMapa = ui.aba === 'atribuir' && ui.bairroFoco
+        ? sugTodasCache.filter((s) => normBairro(s.estab.bairro) === ui.bairroFoco && (!ui.filtrosArt7.size || ui.filtrosArt7.has(s.art7.codigo)))
+        : sugFiltradas();
+      listaMapa.slice(0, 120).forEach((s) => {
+        const mk = L.marker([s.estab.lat, s.estab.lng], { icon: iconeSugestao(s.art7.emoji, s.art7.cor) });
         mk.bindPopup(() => popupSugestao(s), { minWidth: 240 });
         G.sugestoes.addLayer(mk);
         marcadores.set('sug-' + s.estab.id, mk);
@@ -819,9 +1238,10 @@ export function iniciarAdmin(root, { sair }) {
 
     // sede
     const b = S().config.base;
-    L.marker([b.lat, b.lng], { icon: iconeBase(), zIndexOffset: -100 }).bindTooltip('Base (ponto de partida das rotas)').addTo(G.sede);
+    L.marker([b.lat, b.lng], { icon: iconeBase(), zIndexOffset: -100 }).bindTooltip('Base — Quartel do CBMPE (4º GB, ao lado da Rodoviária)').addTo(G.sede);
 
     if (ui.camadas.base) renderBasePublica();
+    renderDestaqueBairros();
     aplicarCamadas();
     renderLegenda();
   }
@@ -831,7 +1251,8 @@ export function iniciarAdmin(root, { sair }) {
     for (const e of S().estabelecimentos) {
       if (e.ativo === false) continue;
       const c = cnaeInfo(e.cnae);
-      const cm = L.circleMarker([e.lat, e.lng], { renderer: canvas, radius: 4, weight: 1, color: '#fff', fillColor: e.moci ? '#C8102E' : (c.cat?.cor || CINZA), fillOpacity: 0.85 });
+      const fill = e.moci && !c.art7 ? corMociStatus(e).cor : (c.cat?.cor || CINZA);
+      const cm = L.circleMarker([e.lat, e.lng], { renderer: canvas, radius: 4, weight: 1, color: '#fff', fillColor: fill, fillOpacity: 0.85 });
       cm.bindPopup(() => popupEstab(e), { minWidth: 220 });
       G.base.addLayer(cm);
     }
@@ -868,7 +1289,8 @@ export function iniciarAdmin(root, { sair }) {
 
   function popupSugestao(s) {
     return h('div', { class: 'pop' },
-      h('strong', {}, s.estab.nome), h('div', { class: 'muted small' }, `${s.info.desc}. Escore ${s.score}`),
+      h('strong', {}, `${s.art7.emoji} ${s.estab.nome}`),
+      h('div', { class: 'muted small' }, `${s.art7.rotulo}${s.info.desc !== 'Edificação cadastrada no MOCI' ? ` · ${s.info.desc}` : ''}${s.estab.bairro ? ` · ${s.estab.bairro}` : ''}`),
       h('table', { class: 'breakdown' }, s.partes.map((p) => h('tr', {}, h('td', {}, p.criterio), h('td', {}, p.motivo), h('td', { class: 'num' }, `${Math.round(p.pontos)}/${p.max}`)))),
       h('div', { class: 'row gap' },
         h('button', { class: 'btn btn-small', type: 'button', onclick: () => { map.closePopup(); rejeitar(s.estab); } }, 'Rejeitar'),

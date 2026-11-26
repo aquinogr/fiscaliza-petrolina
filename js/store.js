@@ -3,7 +3,7 @@
 // e os resultados voltam pelo mesmo caminho. A base pública (Receita + IBGE) é lida do próprio site a cada abertura
 // e só os estabelecimentos com alguma informação de campo são gravados no aparelho.
 // Quando o Supabase for ligado, o mesmo conjunto de operações passa a enviar a "fila de envio" (outbox) ao servidor.
-import { estadoInicial, VERSAO_ESTADO } from './seed.js';
+import { estadoInicial, VERSAO_ESTADO, BASE_QUARTEL_CBMPE, BASE_ANTIGA } from './seed.js';
 import { today, addDays, fmtDate } from './ui.js';
 import { ordenarRota, setorDe, dist } from './geo.js';
 import { aplicarResultado, RESULTADOS_COM_EXIGENCIA } from './dominio.js';
@@ -19,11 +19,20 @@ export function carregar() {
   try { state = JSON.parse(localStorage.getItem(KEY)); } catch { state = null; }
   if (!state || state.versao !== VERSAO_ESTADO) { state = estadoInicial(); gravar(); }
   // Migra aparelhos que guardaram a URL antiga do MOCI de testes para o MOCI oficial (catsertao)
+  let migrou = false;
   if (state.config?.moci_url === MOCI_URL_ANTIGA) {
     state.config.moci_url = '';
     state.config.moci_sync = null;
-    gravar();
+    migrou = true;
   }
+  // Atualiza a base padrão antiga para o Quartel do CBMPE (ao lado da Rodoviária de Petrolina) se não foi movida à mão
+  if (state.config && !state.config.base_ajustada && state.config.base &&
+      Math.abs(state.config.base.lat - BASE_ANTIGA.lat) < 0.0005 &&
+      Math.abs(state.config.base.lng - BASE_ANTIGA.lng) < 0.0005) {
+    state.config.base = { ...BASE_QUARTEL_CBMPE };
+    migrou = true;
+  }
+  if (migrou) gravar();
   try { localStorage.removeItem('fiscaliza-petrolina:v1'); } catch { /* dados de teste antigos */ }
   return state;
 }
@@ -239,6 +248,40 @@ export function distribuirAutomatico(data) {
 export function aceitarSugestao(estabId, vid, data, score) {
   state.decisoes[estabId] = { status: 'aceita', data: today(), score };
   return criarMissao({ estab_id: estabId, tipo: 'fiscalizacao', origem: 'sugestao', vistoriador_id: vid || null, data, prioridade: score >= 75 ? 'alta' : 'media', notas: 'Fiscalização a partir de sugestão automática.' });
+}
+
+// Atribui várias empresas (ex.: um bairro) de uma só vez a um vistoriador, ordenando pela proximidade da base.
+export function atribuirLoteSugestoes(listaSug, vid, data, { respeitarCapacidade = true, rotulo = '' } = {}) {
+  if (!vid || !Array.isArray(listaSug) || !listaSug.length) return { criadas: 0, semVaga: 0 };
+  const cap = state.config.capacidade_dia || 7;
+  const atuais = missoesDo(vid, data).length;
+  const vagas = respeitarCapacidade ? Math.max(0, cap - atuais) : listaSug.length;
+  if (!vagas) return { criadas: 0, semVaga: listaSug.length };
+  const abertas = new Set(state.missoes.filter((m) => ['pendente', 'no_local'].includes(m.status)).map((m) => m.estab_id));
+  const inicio = state.config.base;
+  const candidatas = listaSug
+    .filter((s) => s?.estab && !abertas.has(s.estab.id))
+    .slice()
+    .sort((a, b) => (b.score - a.score) || (dist(inicio, a.estab) - dist(inicio, b.estab)));
+  const escolhidas = candidatas.slice(0, vagas);
+  let ordem = atuais;
+  for (const s of escolhidas) {
+    state.decisoes[s.estab.id] = { status: 'aceita', data: today(), score: s.score };
+    state.missoes.push({
+      id: uid('m'), estab_id: s.estab.id, tipo: 'fiscalizacao',
+      prioridade: s.score >= 75 ? 'alta' : 'media',
+      status: 'pendente', vistoriador_id: vid, data, ordem: ++ordem,
+      processo: null, prazo: null, ref_data: s.estab.moci?.validade || null,
+      notas: rotulo ? `Atribuída em lote (${rotulo}).` : 'Atribuída via painel de distribuição.',
+      origem: 'sugestao', criado_em: today(), checkin: null, checkout: null,
+    });
+  }
+  if (escolhidas.length) {
+    registrar('atribuir_lote', `${vid}:${escolhidas.length}:${rotulo}`);
+    salvar();
+    reordenarRota(vid, data);
+  }
+  return { criadas: escolhidas.length, semVaga: Math.max(0, candidatas.length - escolhidas.length) };
 }
 export function rejeitarSugestao(estabId, motivo) {
   const e = estab(estabId);

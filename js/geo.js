@@ -34,6 +34,58 @@ export function centroide(ring) {
   return { lat: lat / ring.length, lng: lng / ring.length };
 }
 
+// Contorno envolvente (Convex Hull — Monotone Chain) de um conjunto de pontos { lat, lng }.
+export function convexHull(pontos) {
+  const pts = (pontos || [])
+    .filter((p) => p && Number.isFinite(p.lat) && Number.isFinite(p.lng))
+    .map((p) => [p.lat, p.lng])
+    .sort((a, b) => a[1] - b[1] || a[0] - b[0]);
+  if (pts.length <= 2) return pts;
+  const cross = (o, a, b) => (a[1] - o[1]) * (b[0] - o[0]) - (a[0] - o[0]) * (b[1] - o[1]);
+  const lower = [];
+  for (const p of pts) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+    lower.push(p);
+  }
+  const upper = [];
+  for (let i = pts.length - 1; i >= 0; i--) {
+    const p = pts[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+    upper.push(p);
+  }
+  upper.pop(); lower.pop();
+  return lower.concat(upper);
+}
+
+// Polígono limpo do bairro (descarta pontos fora da área urbana do bairro e aplica folga visual).
+export function poligonoBairro(pontos) {
+  const validos = (pontos || []).filter((p) => p && Number.isFinite(p.lat) && Number.isFinite(p.lng));
+  if (!validos.length) return null;
+  let grupo = validos;
+  if (validos.length >= 6) {
+    const lats = validos.map((p) => p.lat).sort((a, b) => a - b);
+    const lngs = validos.map((p) => p.lng).sort((a, b) => a - b);
+    const med = { lat: lats[Math.floor(lats.length / 2)], lng: lngs[Math.floor(lngs.length / 2)] };
+    const ds = validos.map((p) => dist(med, p)).sort((a, b) => a - b);
+    const lim = Math.max(450, ds[Math.floor(ds.length * 0.75)] * 2.4);
+    const filtrados = validos.filter((p) => dist(med, p) <= lim);
+    if (filtrados.length >= 3) grupo = filtrados;
+  }
+  const hull = convexHull(grupo);
+  if (hull.length < 3) {
+    const c = centroide(grupo.map((p) => [p.lat, p.lng]));
+    return { tipo: 'circulo', centro: c, raio: 190 };
+  }
+  const c = centroide(hull);
+  const expandido = hull.map(([lat, lng]) => {
+    const dLat = lat - c.lat, dLng = lng - c.lng;
+    const len = Math.hypot(dLat, dLng) || 1;
+    const pad = 0.00065; // ~70 m de margem visual
+    return [lat + (dLat / len) * pad, lng + (dLng / len) * pad];
+  });
+  return { tipo: 'poligono', anel: expandido, centro: c };
+}
+
 // Ordena paradas: vizinho mais próximo a partir do ponto de partida + melhoria 2-opt.
 export function ordenarRota(inicio, paradas) {
   if (paradas.length < 2) return paradas.slice();

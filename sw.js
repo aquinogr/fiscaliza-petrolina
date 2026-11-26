@@ -1,5 +1,5 @@
 // Service worker: abre o app sem sinal e guarda os mapas já vistos.
-const VERSAO = 'fp-v4';
+const VERSAO = 'fp-v5';
 const SHELL = [
   './', './index.html', './manifest.webmanifest', './css/app.css', './data/cnae.json',
   './js/main.js', './js/store.js', './js/seed.js', './js/ui.js', './js/geo.js', './js/score.js', './js/map.js',

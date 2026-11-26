@@ -268,7 +268,23 @@ body[data-papel="vistoriador"] .toasts { bottom: calc(5.2rem + env(safe-area-ins
 
 .scard { display: flex; gap: 0.75rem; padding: 0.75rem; }
 .score { flex: none; width: 46px; height: 46px; border-radius: 12px; display: grid; place-items: center; font-family: var(--display); font-weight: 700; font-size: 1.3rem; color: var(--c); background: color-mix(in srgb, var(--c) 12%, var(--surface)); border: 2px solid color-mix(in srgb, var(--c) 45%, transparent); }
+.score-ico { font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif; font-size: 1.55rem; line-height: 1; background: color-mix(in srgb, var(--c) 15%, var(--surface)); border: 2px solid var(--c); }
+.tag-art7 { border-color: color-mix(in srgb, var(--c) 45%, var(--line)); background: color-mix(in srgb, var(--c) 10%, var(--surface)); color: var(--ink); }
 .motivos { margin: 0.25rem 0 0.5rem; padding-left: 1.05rem; font-size: 0.9rem; color: var(--ink-2); }
+
+.filter-box { gap: 0.55rem; }
+.fchips { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.fchip { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.28rem 0.6rem; border-radius: 999px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink-2); font-size: 0.82rem; font-weight: 600; cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+.fchip:hover { border-color: var(--c, var(--farda-3)); }
+.fchip.on { border-color: var(--c, var(--farda)); background: color-mix(in srgb, var(--c, var(--farda)) 16%, var(--surface)); color: var(--ink); box-shadow: inset 0 0 0 1px var(--c, var(--farda)); }
+.fchip-ico { font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif; font-size: 0.98rem; line-height: 1; }
+.bairro-details { border-top: 1px solid var(--line); padding-top: 0.45rem; }
+.bairro-details summary { cursor: pointer; font-size: 0.88rem; font-weight: 600; color: var(--farda-3); list-style: none; }
+.bairro-details summary::-webkit-details-marker { display: none; }
+.bairro-details summary::after { content: ' ▾'; }
+.bairro-details[open] summary::after { content: ' ▴'; }
+.bairro-body { margin-top: 0.5rem; gap: 0.5rem; }
+.bairro-list { max-height: 170px; overflow: auto; padding-right: 0.15rem; }
 
 .ecard { display: flex; gap: 0.75rem; padding: 0.75rem; }
 .ecard-alerta { border-color: var(--vermelho); box-shadow: inset 4px 0 0 var(--vermelho); }
@@ -344,6 +360,7 @@ body[data-papel="vistoriador"] .toasts { bottom: calc(5.2rem + env(safe-area-ins
 .pin-fila-alta { border-color: #C8102E; }
 .pin-sug { display: grid; place-items: center; width: 26px; height: 26px; transform: rotate(45deg); background: #fff; border: 2.5px solid var(--c); border-radius: 5px; box-shadow: 0 2px 6px rgba(0,0,0,0.3); margin: 2px; }
 .pin-sug b { transform: rotate(-45deg); font: 700 0.72rem/1 var(--display); color: var(--c); }
+.pin-sug-ico { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: color-mix(in srgb, var(--c) 18%, #ffffff); border: 2.5px solid var(--c); box-shadow: 0 2px 6px rgba(0,0,0,0.35); font: 400 17px/1 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif; }
 .pin-local { display: grid; place-items: center; width: 28px; height: 28px; color: var(--farda); filter: drop-shadow(0 1px 2px rgba(0,0,0,0.4)); }
 .pin-local svg { width: 26px; height: 26px; }
 .pin-local-alerta { color: #C8102E; }
@@ -425,3 +442,111 @@ body[data-papel="vistoriador"] { background: var(--bg); }
 .tab-off { color: color-mix(in srgb, var(--muted) 70%, transparent); cursor: help; }
 .tab-off[aria-disabled="false"] { color: var(--muted); cursor: pointer; }
 .tag-v2 { font-size: 0.7rem; padding: 0 0.35rem; background: var(--surface-2); color: var(--muted); }
+
+/* ---------- aba Atribuir (drag-and-drop futurista + destaque de bairro) ---------- */
+.drop-dock {
+  position: sticky; top: -1rem; z-index: 20;
+  margin: -1rem -1rem 0; padding: 0.85rem 1rem 0.75rem;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+  display: flex; flex-direction: column; gap: 0.55rem;
+}
+.dock-title { font-family: var(--display); font-size: 0.96rem; letter-spacing: 0.02em; }
+.drop-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.45rem; }
+.drop-zone {
+  position: relative;
+  border: 1.5px solid color-mix(in srgb, var(--c) 38%, var(--line));
+  border-radius: var(--r-md);
+  padding: 0.5rem 0.6rem;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--c) 8%, var(--surface)), var(--surface));
+  cursor: pointer;
+  display: flex; flex-direction: column; gap: 0.3rem;
+  transition: transform 0.16s ease, box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+}
+.drop-zone:hover { border-color: var(--c); }
+.drop-zone.alvo {
+  border-color: var(--c);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--c) 30%, transparent), 0 0 18px color-mix(in srgb, var(--c) 24%, transparent);
+}
+.drop-zone.drag-over {
+  transform: scale(1.03);
+  border-color: var(--c);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--c) 22%, var(--surface)), color-mix(in srgb, var(--c) 8%, var(--surface)));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 45%, transparent), 0 0 26px color-mix(in srgb, var(--c) 50%, transparent);
+}
+.drop-zone.drop-flash { animation: dropGlow 0.7s ease-out; }
+@keyframes dropGlow {
+  0% { box-shadow: 0 0 0 4px var(--c), 0 0 30px var(--c); transform: scale(1.04); }
+  100% { box-shadow: 0 0 0 0 transparent; transform: scale(1); }
+}
+.drop-name { display: inline-flex; align-items: center; gap: 0.35rem; font-family: var(--display); font-weight: 700; font-size: 0.88rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drop-count { font-size: 0.78rem; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+.drop-bar { height: 5px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.drop-bar > span { display: block; height: 100%; background: linear-gradient(90deg, var(--c), color-mix(in srgb, var(--c) 65%, #38BDF8)); border-radius: 999px; transition: width 0.25s ease; }
+.drop-hint { font-size: 0.72rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.block-neo { border-color: color-mix(in srgb, #06B6D4 35%, var(--line)); background: linear-gradient(180deg, color-mix(in srgb, #06B6D4 5%, var(--surface)), var(--surface)); }
+.bairro-drag {
+  display: inline-flex; align-items: center;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  overflow: hidden;
+  cursor: grab;
+  transition: transform 0.15s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.bairro-drag:hover { border-color: #06B6D4; box-shadow: 0 0 12px rgba(6, 182, 212, 0.22); }
+.bairro-drag.on { border-color: #06B6D4; background: color-mix(in srgb, #06B6D4 14%, var(--surface)); box-shadow: 0 0 0 1px #06B6D4, 0 0 14px rgba(6, 182, 212, 0.28); }
+.bairro-drag.dragging { opacity: 0.55; transform: scale(0.96); cursor: grabbing; }
+.bairro-drag-btn { border: 0; background: none; padding: 0.28rem 0.6rem; font-size: 0.82rem; font-weight: 600; cursor: inherit; color: var(--ink); }
+.bairro-send { border: 0; border-left: 1px solid var(--line); background: var(--farda); color: #fff; font-weight: 700; padding: 0.28rem 0.55rem; cursor: pointer; }
+.bairro-send:hover { background: var(--farda-2); }
+
+.drag-list { gap: 0.45rem; }
+.drag-card {
+  display: flex; align-items: center; gap: 0.65rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--c);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  cursor: grab;
+  transition: transform 0.15s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.drag-card:hover { border-color: var(--c); box-shadow: 0 4px 16px color-mix(in srgb, var(--c) 18%, transparent); transform: translateY(-1px); }
+.drag-card.dragging { opacity: 0.5; transform: scale(0.97); cursor: grabbing; }
+.drag-ico {
+  flex: none; width: 40px; height: 40px; border-radius: 12px;
+  display: grid; place-items: center;
+  font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
+  font-size: 1.4rem; line-height: 1;
+  background: color-mix(in srgb, var(--c) 14%, var(--surface));
+  border: 1.5px solid color-mix(in srgb, var(--c) 55%, transparent);
+}
+.drag-actions { display: flex; align-items: center; gap: 0.3rem; flex: none; }
+.icon-btn-sm { width: 32px; height: 32px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-2); cursor: pointer; display: grid; place-items: center; font-size: 0.95rem; }
+.icon-btn-sm:hover { border-color: var(--farda-3); }
+
+/* destaque futurista do bairro no mapa (radar / HUD) */
+.bairro-poly-glow {
+  filter: drop-shadow(0 0 8px rgba(6, 182, 212, 0.75));
+  animation: dashFlow 1.6s linear infinite;
+}
+@keyframes dashFlow { to { stroke-dashoffset: -32; } }
+.bairro-hud {
+  background: rgba(15, 23, 42, 0.88);
+  color: #E0F2FE;
+  border: 1px solid rgba(56, 189, 248, 0.7);
+  border-radius: 999px;
+  padding: 0.22rem 0.65rem;
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 0.82rem;
+  letter-spacing: 0.02em;
+  box-shadow: 0 0 16px rgba(6, 182, 212, 0.45);
+}
+.bairro-hud::before { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .bairro-poly-glow, .drop-zone.drop-flash { animation: none; }
+}

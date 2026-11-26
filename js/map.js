@@ -31,9 +31,17 @@ export function iconeFila(prioridade) {
   return L.divIcon({ className: 'pin-wrap', html: `<span class="pin-fila pin-fila-${p}"></span>`, iconSize: [18, 18], iconAnchor: [9, 9], popupAnchor: [0, -8] });
 }
 
-export function iconeSugestao(score, cor) {
-  const s = Math.max(0, Math.min(100, Math.round(+score || 0)));
-  return L.divIcon({ className: 'pin-wrap', html: `<span class="pin-sug" style="--c:${corOk(cor)}"><b>${s}</b></span>`, iconSize: [30, 30], iconAnchor: [15, 15], popupAnchor: [0, -14] });
+const emojiOk = (e) => {
+  const s = String(e || '').trim();
+  return s && !/[<>"'&]/.test(s) && s.length <= 6 ? s : '📍';
+};
+
+export function iconeSugestao(emoji, cor) {
+  return L.divIcon({
+    className: 'pin-wrap',
+    html: `<span class="pin-sug-ico" style="--c:${corOk(cor)}">${emojiOk(emoji)}</span>`,
+    iconSize: [32, 32], iconAnchor: [16, 16], popupAnchor: [0, -15],
+  });
 }
 
 export function iconeLocal(alerta = false) {

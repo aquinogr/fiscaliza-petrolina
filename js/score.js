@@ -2,6 +2,7 @@
 // Cada ponto do escore vem com o motivo, para que a decisão seja auditável.
 import { dist } from './geo.js';
 import { today, diffDays, addDays } from './ui.js';
+import { classificacaoArt7 } from './dominio.js';
 
 let CNAE = { categorias: {}, cnaes: {} };
 export function setCnae(js) { CNAE = js; }
@@ -75,7 +76,7 @@ export function pontuar(e, ctx) {
 
   const total = partes.reduce((a, p) => a + p.pontos, 0);
   const max = partes.reduce((a, p) => a + p.max, 0) || 100;
-  return { score: Math.round((total / max) * 100), partes, tags, info };
+  return { score: Math.round((total / max) * 100), partes, tags, info, art7: classificacaoArt7(e, info) };
 }
 
 // Contagem de vizinhos num raio de 250 m, com grade espacial (rápido mesmo com milhares de pontos).
@@ -103,7 +104,7 @@ export function contextoScore(state) {
 }
 
 // Lista de sugestões para o painel do oficial.
-export function gerarSugestoes(state) {
+export function gerarSugestoes(state, { ignorarLimite = false } = {}) {
   const ctx = contextoScore(state);
   const hoje = today();
   const comMissaoAberta = new Set(state.missoes.filter((m) => ABERTOS.includes(m.status)).map((m) => m.estab_id));
@@ -123,7 +124,7 @@ export function gerarSugestoes(state) {
       }
     }
     const p = pontuar(e, ctx);
-    if (p.score < lim) continue;
+    if (!ignorarLimite && p.score < lim) continue;
     out.push({ estab: e, ...p, pedido: pedidos.has(e.id) });
   }
   out.sort((a, b) => b.score - a.score);

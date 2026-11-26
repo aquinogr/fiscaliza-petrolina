@@ -10,6 +10,10 @@ export const VISTORIADORES = [
 
 export const VERSAO_ESTADO = 2;
 
+// Quartel do 4º GB / CBMPE — Av. Nilo Coelho, ao lado da Rodoviária de Petrolina (OpenStreetMap).
+export const BASE_QUARTEL_CBMPE = { lat: -9.392856, lng: -40.508858 };
+export const BASE_ANTIGA = { lat: -9.3890, lng: -40.5030 };
+
 export function estadoInicial() {
   return {
     versao: VERSAO_ESTADO,
@@ -17,7 +21,7 @@ export function estadoInicial() {
     criado_em: Date.now(),
     config: {
       unidade: 'CBMPE / CAT Sertão',
-      base: { lat: -9.3890, lng: -40.5030 }, // ajuste em Ajustes > Base de partida
+      base: { ...BASE_QUARTEL_CBMPE }, // Quartel do CBMPE (4º GB, ao lado da Rodoviária de Petrolina)
       base_ajustada: false,
       raio_checkin: 150,
       capacidade_dia: 7,

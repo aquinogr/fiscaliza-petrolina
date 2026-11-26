@@ -86,3 +86,50 @@ export function formatarCNPJ(c) {
   if (d.length !== 14) return c || '';
   return `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}`;
 }
+
+// Classificações oficiais do Art. 7º do COSCIP-PE (Decreto nº 19.644/1997, tipos A a Q) + MOCI.
+export const ART7_ORDEM = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'MOCI'];
+
+export const ART7_COSCIP = {
+  A: { codigo: 'A', curto: 'Res. Unifamiliar', nome: 'Residencial Privativa Unifamiliar', artigo: 'Art. 8º', emoji: '🏠', cor: '#0D9488' },
+  B: { codigo: 'B', curto: 'Res. Multifamiliar', nome: 'Residencial Privativa Multifamiliar', artigo: 'Art. 9º', emoji: '🏢', cor: '#0284C7' },
+  C: { codigo: 'C', curto: 'Res. Coletiva', nome: 'Residencial Coletiva', artigo: 'Art. 10', emoji: '🏘️', cor: '#2563EB' },
+  D: { codigo: 'D', curto: 'Hospedagem', nome: 'Residencial Transitória', artigo: 'Art. 11', emoji: '🏨', cor: '#0369A1' },
+  E: { codigo: 'E', curto: 'Comercial', nome: 'Comercial', artigo: 'Art. 12', emoji: '🛒', cor: '#475569' },
+  F: { codigo: 'F', curto: 'Escritório', nome: 'Escritório', artigo: 'Art. 13', emoji: '💼', cor: '#64748B' },
+  G: { codigo: 'G', curto: 'Mista', nome: 'Mista', artigo: 'Art. 14', emoji: '🏬', cor: '#4F46E5' },
+  H: { codigo: 'H', curto: 'Reunião de Público', nome: 'Reunião de Público', artigo: 'Art. 15', emoji: '👥', cor: '#9333EA' },
+  I: { codigo: 'I', curto: 'Hospitalar', nome: 'Hospitalar', artigo: 'Art. 16', emoji: '🏥', cor: '#DC2626' },
+  J: { codigo: 'J', curto: 'Pública', nome: 'Pública', artigo: 'Art. 17', emoji: '🏛️', cor: '#1D4ED8' },
+  K: { codigo: 'K', curto: 'Escolar', nome: 'Escolar', artigo: 'Art. 18', emoji: '🏫', cor: '#0891B2' },
+  L: { codigo: 'L', curto: 'Industrial', nome: 'Industrial', artigo: 'Art. 19', emoji: '🏭', cor: '#15803D' },
+  M: { codigo: 'M', curto: 'Garagem', nome: 'Garagem', artigo: 'Art. 20', emoji: '🅿️', cor: '#52525B' },
+  N: { codigo: 'N', curto: 'Galpão / Depósito', nome: 'Galpão ou Depósito', artigo: 'Art. 21', emoji: '📦', cor: '#B45309' },
+  O: { codigo: 'O', curto: 'Petróleo / GLP', nome: 'Derivados de Petróleo, Álcool e Perigosos', artigo: 'Art. 22', emoji: '⛽', cor: '#B91C1C' },
+  P: { codigo: 'P', curto: 'Templo Religioso', nome: 'Templos Religiosos', artigo: 'Art. 23', emoji: '⛪', cor: '#7C3AED' },
+  Q: { codigo: 'Q', curto: 'Especiais', nome: 'Especiais', artigo: 'Art. 24', emoji: '🧨', cor: '#EA580C' },
+  MOCI: { codigo: 'MOCI', curto: 'MOCI', nome: 'Edificação cadastrada no MOCI', artigo: 'MOCI', emoji: '🚒', cor: '#15803D' },
+};
+
+// Cor do ícone do MOCI (🚒): verde para AVCB válido, vermelho apenas para AVCB vencido, âmbar para sem AVCB.
+export function corMociStatus(estab) {
+  const sit = estab?.situacao_doc && estab.situacao_doc !== 'desconhecida'
+    ? estab.situacao_doc
+    : (estab?.moci?.situacao || 'sem_documento');
+  if (sit === 'valido') return { cor: '#15803D', statusLabel: 'AVCB válido' };
+  if (sit === 'vencido') return { cor: '#B91C1C', statusLabel: 'AVCB vencido' };
+  return { cor: '#D97706', statusLabel: 'Sem AVCB' };
+}
+
+export function classificacaoArt7(estab, info) {
+  const cod = info?.art7;
+  if (cod && ART7_COSCIP[cod]) {
+    const base = ART7_COSCIP[cod];
+    return { ...base, rotulo: `Tipo ${base.codigo} · ${base.curto}` };
+  }
+  if (estab?.moci) {
+    const { cor, statusLabel } = corMociStatus(estab);
+    return { ...ART7_COSCIP.MOCI, cor, statusLabel, rotulo: `MOCI · ${statusLabel}` };
+  }
+  return { codigo: 'OUTRO', curto: 'Outros', nome: 'Sem classificação Art. 7º', artigo: '', emoji: '📍', cor: '#64748B', rotulo: 'Sem classificação' };
+}
