@@ -7,7 +7,7 @@ import { estadoInicial, VERSAO_ESTADO } from './seed.js';
 import { today, addDays, fmtDate } from './ui.js';
 import { ordenarRota, setorDe, dist } from './geo.js';
 import { aplicarResultado, RESULTADOS_COM_EXIGENCIA } from './dominio.js';
-import { converterPonto, cidadeAceita, nomesParecidos, MOCI_URL_PADRAO } from './moci.js';
+import { converterPonto, cidadeAceita, nomesParecidos, MOCI_URL_PADRAO, MOCI_URL_ANTIGA } from './moci.js';
 
 const KEY = 'fiscaliza-petrolina:dados';
 let state = null;
@@ -18,6 +18,12 @@ const subs = new Set();
 export function carregar() {
   try { state = JSON.parse(localStorage.getItem(KEY)); } catch { state = null; }
   if (!state || state.versao !== VERSAO_ESTADO) { state = estadoInicial(); gravar(); }
+  // Migra aparelhos que guardaram a URL antiga do MOCI de testes para o MOCI oficial (catsertao)
+  if (state.config?.moci_url === MOCI_URL_ANTIGA) {
+    state.config.moci_url = '';
+    state.config.moci_sync = null;
+    gravar();
+  }
   try { localStorage.removeItem('fiscaliza-petrolina:v1'); } catch { /* dados de teste antigos */ }
   return state;
 }
@@ -359,7 +365,8 @@ export function salvarVistoriador(v) {
 // ---------- MOCI ----------
 export function configMoci() {
   const c = state.config;
-  return { url: c.moci_url || MOCI_URL_PADRAO, cidades: c.moci_cidades ?? 'Petrolina', sync: c.moci_sync || null };
+  const url = !c.moci_url || c.moci_url === MOCI_URL_ANTIGA ? MOCI_URL_PADRAO : c.moci_url;
+  return { url, cidades: c.moci_cidades ?? 'Petrolina', sync: c.moci_sync || null };
 }
 
 // Recebe os pontos crus do MOCI e atualiza a base. Só lê o MOCI; nada volta para lá.

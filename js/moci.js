@@ -1,9 +1,10 @@
-// Integração com o MOCI (Mapa de OCI do CAT Sertão).
+// Integração com o MOCI (Mapa de Ocupações Contra Incêndio do CAT Sertão — oficial).
 // O MOCI publica os pontos cadastrados numa consulta pública do Google Apps Script (a mesma que o mapa dele usa).
 // Aqui só lemos: nada é gravado no MOCI.
 
-export const MOCI_URL_PADRAO = 'https://script.google.com/macros/s/AKfycbwQwjmNoPHYD0lOvqaAsOs9wQntZ24p68y9cAGn1yck7cUgmZia_-6aH2yv1dqPvmcIGQ/exec';
-export const MOCI_SITE = 'https://aquinogr.github.io/moci-catsertao/';
+export const MOCI_URL_ANTIGA = 'https://script.google.com/macros/s/AKfycbwQwjmNoPHYD0lOvqaAsOs9wQntZ24p68y9cAGn1yck7cUgmZia_-6aH2yv1dqPvmcIGQ/exec';
+export const MOCI_URL_PADRAO = 'https://script.google.com/macros/s/AKfycbyvQ84nrli6GUanIhbqNl92C-GiCws214Q0xU2CnfBAmo0OsVVFtcWmPtf7XyZcRR9S6A/exec';
+export const MOCI_SITE = 'https://catsertao.github.io/moci-catsertao/';
 
 export const norm = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toUpperCase();
 const sim = (v) => v === true || ['SIM', 'TRUE', '1', 'X', 'S'].includes(norm(v));
@@ -41,6 +42,7 @@ export function converterPonto(p, hoje) {
     validade: temData ? validade : null,
     dados: {
       capacidade_litros: num(p.capacidade_litros),
+      hidrantes_edificacao: p.hidrantes_edificacao !== undefined && String(p.hidrantes_edificacao).trim() !== '' ? sim(p.hidrantes_edificacao) : null,
       hidrante_fachada: sim(p.hidrante_fachada),
       hidrante_recalque: sim(p.hidrante_recalque),
       sprinkler: sim(p.possui_sprinkler),
@@ -70,7 +72,11 @@ export function linhasMoci(e) {
   const porte = [d.pavimentos ? `${d.pavimentos} pavimento(s)` : null, d.area ? `${fmtNum(d.area)} m²` : null, d.altura ? `${fmtNum(d.altura)} m de altura` : null].filter(Boolean).join(', ');
   if (porte) out.push(['Edificação', porte]);
   if (d.capacidade_litros) out.push(['Reserva de incêndio', `${fmtNum(d.capacidade_litros)} L`]);
-  out.push(['Hidrantes', `fachada: ${sn(d.hidrante_fachada)}, recalque: ${sn(d.hidrante_recalque)}`]);
+  if (d.hidrantes_edificacao !== undefined && d.hidrantes_edificacao !== null) {
+    out.push(['Hidrantes', `edificação: ${sn(d.hidrantes_edificacao)}, recalque: ${sn(d.hidrante_recalque)}`]);
+  } else {
+    out.push(['Hidrantes', `fachada: ${sn(d.hidrante_fachada)}, recalque: ${sn(d.hidrante_recalque)}`]);
+  }
   out.push(['Sprinklers e caldeira', `sprinklers: ${sn(d.sprinkler)}, caldeira: ${sn(d.caldeira)}`]);
   return out;
 }
